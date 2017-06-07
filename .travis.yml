@@ -1,0 +1,17 @@
+sudo: required
+
+services:
+  - docker
+
+env:
+  matrix:
+    - TEST_SUITE=medium
+    - TEST_SUITE=sql
+
+before_script:
+  - docker-compose -f docker/docker-compose.yml run checkout
+  - docker-compose -f docker/docker-compose.yml run -e MAKEFLAGS="-j2" build
+
+script:
+  - docker-compose -f docker/docker-compose.yml run -e TEST_SUITE=$TEST_SUITE test
+
