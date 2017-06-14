@@ -16,4 +16,4 @@ for t in ${TEST_SUITE//:/ }; do
   cubrid-testtools/CTP/bin/ctp.sh $t
 done
 
-print_failed.sh cubrid-testtools/CTP/sql/result
+print_failed.sh -x $CUBRID/tmp/tests cubrid-testtools/CTP/sql/result

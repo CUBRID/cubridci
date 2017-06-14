@@ -1,19 +1,38 @@
 #!/bin/bash
 
+let max_print_failed=50
+
+function usage ()
+{
+     echo "Usage: $0 [-x <xml output path>] [-n show count] <result path>"
+}
+
+while getopts "x:n:" opt; do
+     case $opt in
+     x)
+         xml_output="$OPTARG"
+         [ ! -d "$xml_output" ] && mkdir -p "$xml_output"
+         ;;
+     n)
+         max_print_failed=$OPTARG
+         ;;
+     *)
+         usage
+         exit 1
+         ;;
+     esac
+done
+shift $(($OPTIND - 1))
+
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <result path>"
+  usage
   exit 1
 fi
 result_path=$1
 if [ ! -d $result_path ]; then
   echo "Result path '$result_path' does not exist."
-  echo "Usage: $0 <result path>"
+  usage
   exit 1
-fi
-
-let max_print_failed=50
-if [ $# -gt 1 ]; then
-  max_print_failed=$2
 fi
 
 let ncount=0
@@ -79,6 +98,33 @@ if [ $max_print_failed -ne 0 -a $nfailed -gt $max_print_failed ]; then
   echo "** More than $max_print_failed failed Testcases are omitted. (There are $nfailed failed Testcases on this test)"
 fi
 echo ""
+
+if [ -n "$xml_output" ]; then
+  summary_xml_list=$(find $result_path -name summary.xml)
+  for f in $summary_xml_list; do
+    target=$(dirname ${f##*schedule_})
+    target=${target%_*}
+    cat << "_EOL" | xsltproc --stringparam target "${target}" - $f > "$xml_output/${target}.xml"
+<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
+ <xsl:output indent="yes"/>
+ <xsl:template match="results">
+   <testsuites>
+     <testsuite name="{$target}" tests="{count(scenario)}" failures="{count(scenario/result[contains(.,'fail')])}">
+       <xsl:apply-templates select="scenario"/>
+     </testsuite>
+   </testsuites>
+ </xsl:template>
+ <xsl:template match="scenario">
+   <testcase classname="{$target}" name="{case}" time="{elapsetime div 1000}">
+      <xsl:if test="result='fail'">
+        <failure message="failed"/>
+      </xsl:if>
+   </testcase>
+ </xsl:template>
+</xsl:stylesheet>
+_EOL
+  done
+fi
 
 if [ $nfailed -gt 0 ]; then
   echo "** There are $nfailed failed Testcases on this test."
