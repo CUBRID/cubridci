@@ -9,9 +9,8 @@ env:
     - TEST_SUITE=sql
 
 before_script:
-  - docker-compose -f docker/docker-compose.yml run checkout
-  - docker-compose -f docker/docker-compose.yml run -e MAKEFLAGS="-j2" build
+  - docker build -t cubridci ci
 
 script:
-  - docker-compose -f docker/docker-compose.yml run -e TEST_SUITE=$TEST_SUITE test
+  - docker run -e MAKEFLAGS="-j2" -e TEST_SUITE=$TEST_SUITE cubridci
 
