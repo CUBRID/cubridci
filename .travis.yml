@@ -10,7 +10,10 @@ env:
 
 before_script:
   - docker build -t cubridci docker/ci
+  - git clone -q --depth 1 https://github.com/CUBRID/cubrid home/cubrid
+  - git clone -q --depth 1 https://github.com/CUBRID/cubrid-testtools home/cubrid-testtools
+  - git clone -q --depth 1 https://github.com/CUBRID/cubrid-testcases home/cubrid-testcases
 
 script:
-  - docker run -e MAKEFLAGS="-j2" -e TEST_SUITE=$TEST_SUITE cubridci
+  - docker run -e MAKEFLAGS="-j2" -e TEST_SUITE=$TEST_SUITE -v $TRAVIS_BUILD_DIR/home:/home cubridci
 
