@@ -39,6 +39,9 @@ function run_test ()
 
 function report_test ()
 {
+  local ncount=0
+  local max_print_failed=50
+
   while getopts "x:n:" opt; do
     case $opt in
       x)
@@ -62,8 +65,6 @@ function report_test ()
     echo "Result path '$result_path' does not exist."
     return 1
   fi
-
-  let ncount=0
 
   failed_list=$(find $result_path -name summary_info | xargs -n1 grep -hw nok | awk -F: '{print $1}')
   if [ -z "$failed_list" ]; then
