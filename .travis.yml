@@ -9,7 +9,7 @@ env:
     - TEST_SUITE=sql
 
 before_script:
-  - docker build -t cubridci ci
+  - docker build -t cubridci docker/ci
 
 script:
   - docker run -e MAKEFLAGS="-j2" -e TEST_SUITE=$TEST_SUITE cubridci
