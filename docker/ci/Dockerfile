@@ -7,11 +7,11 @@ RUN set -x \
 	&& yum -y install which git cmake systemtap-sdt-devel ncurses-devel java-1.7.0-devel ant elfutils-libelf-devel \
 	&& yum clean all
 
-ENV HOME /home
+ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
 
 # CUBRID envronment variables
-ENV CUBRID $HOME/CUBRID
+ENV CUBRID $WORKDIR/CUBRID
 ENV CUBRID_DATABASES $CUBRID/databases
 ENV PATH $CUBRID/bin:$PATH
 ENV LD_LIBRARY_PATH $CUBRID/lib
@@ -24,9 +24,8 @@ ENV TZ Asia/Seoul
 RUN ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
 RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
 
-VOLUME $HOME
-
-WORKDIR $HOME
+VOLUME $WORKDIR
+WORKDIR $WORKDIR
 
 COPY docker-entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

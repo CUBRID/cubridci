@@ -19,10 +19,10 @@ function run_build ()
 function run_test ()
 {
   if [ ! -d cubrid-testtools ]; then
-    git clone --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools
+    git clone --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools $WORKDIR/cubrid-testtools
   fi
   if [ ! -d cubrid-testcases ]; then
-    git clone --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases
+    git clone --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testtools
   fi
 
   if [ ! -d cubrid-testtools -o ! -d cubrid-testcases ]; then
@@ -31,7 +31,7 @@ function run_test ()
   fi
 
   for t in ${TEST_SUITE//:/ }; do
-    cubrid-testtools/CTP/bin/ctp.sh $t
+    HOME=$WORKDIR cubrid-testtools/CTP/bin/ctp.sh $t
   done
 
   report_test -x $CUBRID/tmp/tests cubrid-testtools/CTP/sql/result
@@ -98,12 +98,12 @@ function report_test ()
     nr=$(ls $diffdir/result* | wc -l)
 
     echo "-------------------------------------------------------------------------------------------------------------------"
-    echo "** Testcase : ${casefile##*$HOME/} (total: $nq queries)"
-    echo "** Expected : ${answerfile##*$HOME/}"
-    echo "** Actual   : ${resultfile##*$HOME/}"
+    echo "** Testcase : ${casefile##*$WORKDIR/} (total: $nq queries)"
+    echo "** Expected : ${answerfile##*$WORKDIR/}"
+    echo "** Actual   : ${resultfile##*$WORKDIR/}"
     echo "-------------------------------------------------------------------------------------------------------------------"
     [ $nq -eq $na -a $nq -eq $nr ] || { echo "error ($nq != $na != $nr)"; return 1; }
-    (( ncount++ ))
+    ncount=$((ncount+1))
     for i in $(awk "BEGIN { for (i=0; i<$nq; i++) printf(\"%d \", i) }"); do
       if $(cmp -s $diffdir/answer$i $diffdir/result$i) ; then
         continue
@@ -111,7 +111,7 @@ function report_test ()
         echo "** Failed query #$((i+1)) (in failed Testcase #$ncount of $nfailed: $(basename $casefile))"
         cat $diffdir/testcase$i
         echo "-------------------------------------------------------------------------------------------------------------------"
-        diff -u $diffdir/answer$i $diffdir/result$i
+        diff -u $diffdir/answer$i $diffdir/result$i || echo
       fi
     done
     rm -rf $diffdir
@@ -121,7 +121,6 @@ function report_test ()
     fi
   done
 
-  echo ""
   if [ $max_print_failed -ne 0 -a $nfailed -gt $max_print_failed ]; then
     echo "-------------------------------------------------------------------------------------------------------------------"
     echo "** More than $max_print_failed failed Testcases are omitted. (There are $nfailed failed Testcases on this test)"
@@ -159,7 +158,7 @@ _EOL
     echo "** There are $nfailed failed Testcases on this test."
     echo "** All failed Testcases are listed below:"
     for f in $failed_list ; do
-      echo " - ${f##*$HOME/}"
+      echo " - ${f##*$WORKDIR/}"
     done
     echo "** $nfailed cases are failed."
     exit $nfailed
