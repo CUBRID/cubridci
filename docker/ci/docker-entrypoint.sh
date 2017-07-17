@@ -22,7 +22,7 @@ function run_test ()
     git clone --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools $WORKDIR/cubrid-testtools
   fi
   if [ ! -d cubrid-testcases ]; then
-    git clone --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testtools
+    git clone --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
   fi
 
   if [ ! -d cubrid-testtools -o ! -d cubrid-testcases ]; then
