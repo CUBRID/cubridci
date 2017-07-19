@@ -1,5 +1,16 @@
 #!/bin/bash -e
 
+function run_checkout ()
+{
+  if [ ! -d cubrid-testtools ]; then
+    git clone -q --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools $WORKDIR/cubrid-testtools
+  fi
+  if [ ! -d cubrid-testcases ]; then
+    git clone -q --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
+  fi
+
+}
+
 function run_build ()
 {
   if [ ! -d cubrid ]; then
@@ -18,16 +29,8 @@ function run_build ()
 
 function run_test ()
 {
-  if [ ! -d cubrid-testtools ]; then
-    git clone --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools $WORKDIR/cubrid-testtools
-  fi
-  if [ ! -d cubrid-testcases ]; then
-    git clone --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
-  fi
-
-  if [ ! -d cubrid-testtools -o ! -d cubrid-testcases ]; then
-    echo "Cannot find test tool or cases directory!"
-    return 1
+  if [ ! -d $WORKDIR/cubrid-testtools -o ! -d $WORKDIR/cubrid-testcases ]; then
+    run_checkout
   fi
 
   for t in ${TEST_SUITE//:/ }; do
@@ -189,6 +192,9 @@ if [ $# -eq 0 ]; then
   run_build && run_test
 else
   case "$1" in
+    checkout)
+      run_checkout
+      ;;
     build)
       run_build
       ;;
