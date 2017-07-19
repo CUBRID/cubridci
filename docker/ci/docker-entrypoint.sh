@@ -143,7 +143,7 @@ function report_test ()
    </testsuites>
  </xsl:template>
  <xsl:template match="scenario">
-   <testcase classname="{$target}" name="{testcase}" time="{elapsetime div 1000}">
+   <testcase classname="{$target}" name="{case}" time="{elapsetime div 1000}">
       <xsl:if test="result='fail'">
         <failure message="failed"/>
       </xsl:if>
