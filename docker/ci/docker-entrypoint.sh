@@ -34,7 +34,7 @@ function run_test ()
   fi
 
   for t in ${TEST_SUITE//:/ }; do
-    HOME=$WORKDIR cubrid-testtools/CTP/bin/ctp.sh $t
+    (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
   done
 
   report_test -x $TEST_REPORT cubrid-testtools/CTP/sql/result

@@ -4,7 +4,7 @@ LABEL Description="This is a build and test environment image for CUBRID"
 
 RUN set -x \
 	&& yum -y groupinstall 'Development Tools' \
-	&& yum -y install which git cmake systemtap-sdt-devel ncurses-devel java-1.7.0-devel ant elfutils-libelf-devel \
+	&& yum -y install which git cmake systemtap-sdt-devel ncurses-devel java-1.7.0-devel ant elfutils-libelf-devel wget \
 	&& yum clean all
 
 ENV WORKDIR /home
