@@ -37,7 +37,9 @@ function run_test ()
     (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
   done
 
-  report_test -x $TEST_REPORT cubrid-testtools/CTP/sql/result
+  if [[ ":$TEST_SUITE:" =~ :(medium|sql): ]]; then
+    report_test -x $TEST_REPORT cubrid-testtools/CTP/sql/result
+  fi
 }
 
 function report_test ()
@@ -100,21 +102,20 @@ function report_test ()
     csplit -n0 -sz -f $diffdir/result $resultfile '/===================================================/' '{*}'
     nr=$(ls $diffdir/result* | wc -l)
 
-    echo "-------------------------------------------------------------------------------------------------------------------"
-    echo "** Testcase : ${casefile##*$WORKDIR/} (total: $nq queries)"
-    echo "** Expected : ${answerfile##*$WORKDIR/}"
-    echo "** Actual   : ${resultfile##*$WORKDIR/}"
-    echo "-------------------------------------------------------------------------------------------------------------------"
-    [ $nq -eq $na -a $nq -eq $nr ] || { echo "error ($nq != $na != $nr)"; return 1; }
     ncount=$((ncount+1))
+    printf "%115s\n" "($ncount/$nfailed)" | tr ' ' '-'
+    echo "** Testcase : ${casefile##*$WORKDIR/} (has $nq queries)"
+    echo "** Expected : ${answerfile##*$WORKDIR/}"
+    #echo "** Actual   : ${resultfile##*$WORKDIR/}"
+    [ $nq -eq $na -a $nq -eq $nr ] || { echo "Parse error ($nq != $na != $nr)"; return 1; }
     for i in $(awk "BEGIN { for (i=0; i<$nq; i++) printf(\"%d \", i) }"); do
       if $(cmp -s $diffdir/answer$i $diffdir/result$i) ; then
         continue
       else
-        echo "** Failed query #$((i+1)) (in failed Testcase #$ncount of $nfailed: $(basename $casefile))"
+        echo "** Failed query #$((i+1)) (in $(basename $casefile)):"
         cat $diffdir/testcase$i
-        echo "-------------------------------------------------------------------------------------------------------------------"
-        diff -u $diffdir/answer$i $diffdir/result$i || echo
+        echo "** Difference between Expected(-) and Actual(+) results:"
+        diff -u $diffdir/answer$i $diffdir/result$i | tail -n+3
       fi
     done
     rm -rf $diffdir
@@ -125,7 +126,7 @@ function report_test ()
   done
 
   if [ $max_print_failed -ne 0 -a $nfailed -gt $max_print_failed ]; then
-    echo "-------------------------------------------------------------------------------------------------------------------"
+    printf "%115s\n" | tr ' ' '-'
     echo "** More than $max_print_failed failed Testcases are omitted. (There are $nfailed failed Testcases on this test)"
   fi
   echo ""
@@ -135,7 +136,7 @@ function report_test ()
     for f in $summary_xml_list; do
       target=$(dirname ${f##*schedule_})
       target=${target%_*}
-      cat << "_EOL" | xsltproc --stringparam target "${target}" - $f > "$xml_output/${target}.xml"
+      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}" - $f || true
 <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
  <xsl:output indent="yes"/>
  <xsl:template match="results">
@@ -188,27 +189,32 @@ function get_jenkins ()
   curl --create-dirs -sSLo jenkins/slave.jar $JENKINS_URL/jnlpJars/slave.jar
 }
 
-if [ $# -eq 0 ]; then
+function run_default ()
+{
   run_build && run_test
+}
+
+case "$1" in
+  "")
+    set -- run_default
+    ;;
+  checkout)
+    set -- run_checkout
+    ;;
+  build)
+    set -- run_build
+    ;;
+  test)
+    set -- run_test
+    ;;
+  jenkins-slave)
+    get_jenkins "${@:2}"
+    set -- java $JAVA_OPTS -cp jenkins/slave.jar hudson.remoting.jnlp.Main -headless "$@"
+    ;;
+esac
+
+if [ -n "$(type -t $1)" -a "$(type -t $1)" = function ]; then
+  eval "$@"
 else
-  case "$1" in
-    checkout)
-      run_checkout
-      ;;
-    build)
-      run_build
-      ;;
-    test)
-      run_test
-      ;;
-    jenkins-slave)
-      shift
-      get_jenkins "$@"
-      set -- java $JAVA_OPTS -cp jenkins/slave.jar hudson.remoting.jnlp.Main -headless "$@"
-      exec "$@"
-      ;;
-    *)
-      exec "$@"
-      ;;
-  esac
+  exec "$@"
 fi

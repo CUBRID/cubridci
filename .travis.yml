@@ -6,7 +6,6 @@ services:
 env:
   matrix:
     - TEST_SUITE=medium
-    - TEST_SUITE=sql
 
 before_script:
   - docker build -t cubridci docker/ci
