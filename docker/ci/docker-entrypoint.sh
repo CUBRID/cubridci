@@ -208,7 +208,8 @@ case "$1" in
     set -- run_test
     ;;
   jenkins-slave)
-    get_jenkins "${@:2}"
+    shift
+    get_jenkins "$@"
     set -- java $JAVA_OPTS -cp jenkins/slave.jar hudson.remoting.jnlp.Main -headless "$@"
     ;;
 esac
