@@ -1,11 +1,13 @@
-FROM centos:7
+FROM centos:6
 
 LABEL Description="This is a build and test environment image for CUBRID"
 
 RUN set -x \
-	&& yum -y groupinstall 'Development Tools' \
-	&& yum -y install which git cmake systemtap-sdt-devel ncurses-devel java-1.7.0-devel ant elfutils-libelf-devel wget \
-	&& yum clean all
+	&& yum install -y centos-release-scl \
+	&& yum install -y --setopt=tsflags=nodocs devtoolset-6-gcc devtoolset-6-gcc-c++ devtoolset-6-make \
+		devtoolset-6-elfutils-libelf-devel devtoolset-6-systemtap-sdt-devel \
+		ncurses-devel cmake java-devel ant bison flex git wget \
+	&& yum clean all -y
 
 ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
@@ -29,4 +31,4 @@ VOLUME $WORKDIR
 WORKDIR $WORKDIR
 
 COPY docker-entrypoint.sh /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["scl", "enable", "devtoolset-6", "--", "/entrypoint.sh"]
