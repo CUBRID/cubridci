@@ -38,7 +38,7 @@ function run_test ()
   done
 
   if [[ ":$TEST_SUITE:" =~ :(medium|sql): ]]; then
-    report_test -x $TEST_REPORT cubrid-testtools/CTP/sql/result
+    report_test -x $TEST_REPORT $WORKDIR/cubrid-testtools/CTP/sql/result
   fi
 }
 
