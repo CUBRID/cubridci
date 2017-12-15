@@ -6,11 +6,17 @@ function run_checkout ()
     git clone -q --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools $WORKDIR/cubrid-testtools
   elif [ -d $WORKDIR/cubrid-testtools/.git ]; then
     (cd $WORKDIR/cubrid-testtools && git clean -df)
+  else
+    echo "Cannot find .git from $WORKDIR/cubrid-testtools directory!"
+    return 1
   fi
   if [ ! -d $WORKDIR/cubrid-testcases ]; then
     git clone -q --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
   elif [ -d $WORKDIR/cubrid-testcases/.git ]; then
     (cd $WORKDIR/cubrid-testcases && git clean -df)
+  else
+    echo "Cannot find .git from $WORKDIR/cubrid-testcases directory!"
+    return 1
   fi
 
 }
@@ -88,9 +94,10 @@ function report_test ()
   fi
   echo ""
 
-  testcase_remote_url=$(cd $WORKDIR/cubrid-testcases && git config --get remote.origin.url)
-  testcase_hash=$(cd $WORKDIR/cubrid-testcases && git rev-parse HEAD)
-  testcase_base_url="${testcase_remote_url%.git}/blob/$testcase_hash"
+  testcases_root_dir="$WORKDIR/cubrid-testcases"
+  testcases_remote_url=$(cd $testcases_root_dir && git config --get remote.origin.url)
+  testcases_hash=$(cd $testcases_root_dir && git rev-parse HEAD)
+  testcases_base_url="${testcases_remote_url%.git}/blob/$testcases_hash"
 
   for f in $failed_list; do
     casefile=$f
@@ -124,9 +131,10 @@ function report_test ()
         diff -u $diffdir/answer$i $diffdir/result$i | tail -n+3
       fi
     done | tee -a $reportfile
-    testcase_sql_url="$testcase_base_url/${casefile##*$WORKDIR/cubrid-testcases/}"
-    echo "$testcase_sql_url" >> $reportfile
-    echo "<a href='$testcase_sql_url' title='sql'>sql</a>" >> $reportfile
+    testcases_case_url="$testcases_base_url/${casefile##*$testcases_root_dir/}"
+    testcases_answer_url="$testcases_base_url/${answerfile##*$testcases_root_dir/}"
+    echo "** TestCase: $testcases_case_url" >> $reportfile
+    echo "** Expected: $testcases_answer_url" >> $reportfile
     echo "]]></failure>" >> $reportfile
     rm -rf $diffdir
 
