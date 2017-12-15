@@ -6,7 +6,7 @@ RUN set -x \
 	&& yum install -y centos-release-scl \
 	&& yum install -y --setopt=tsflags=nodocs devtoolset-6-gcc devtoolset-6-gcc-c++ devtoolset-6-make \
 		devtoolset-6-elfutils-libelf-devel devtoolset-6-systemtap-sdt-devel \
-		ncurses-devel cmake java-devel ant bison flex git wget libxslt \
+		ncurses-devel cmake java-1.8.0-openjdk-devel ant bison flex git wget libxslt \
 		rpm-build libtool autoconf automake \
 	&& yum clean all -y
 

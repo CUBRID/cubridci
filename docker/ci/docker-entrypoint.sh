@@ -2,36 +2,37 @@
 
 function run_checkout ()
 {
-  if [ ! -d cubrid-testtools ]; then
+  if [ ! -d $WORKDIR/cubrid-testtools ]; then
     git clone -q --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools $WORKDIR/cubrid-testtools
+  elif [ -d $WORKDIR/cubrid-testtools/.git ]; then
+    (cd $WORKDIR/cubrid-testtools && git clean -df)
   fi
-  if [ ! -d cubrid-testcases ]; then
+  if [ ! -d $WORKDIR/cubrid-testcases ]; then
     git clone -q --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
+  elif [ -d $WORKDIR/cubrid-testcases/.git ]; then
+    (cd $WORKDIR/cubrid-testcases && git clean -df)
   fi
 
 }
 
 function run_build ()
 {
-  if [ ! -d cubrid ]; then
-    echo "Cannot find source directory!"
+  if [ -f ./build.sh ]; then
+    CUBRID_SRCDIR=.
+  elif [ -f cubrid/build.sh ]; then
+    CUBRID_SRCDIR=cubrid
+  else
+    echo "Cannot find CUBRID source directory!"
     return 1
   fi
 
-  if [ -d cubrid/build ]; then
-    rm -rf cubrid/build
-  fi
-
-  cmake -E make_directory cubrid/build
-  cmake -E chdir cubrid/build cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=$CUBRID ..
-  cmake --build cubrid/build --target install | tee build.log | grep -e '\[[ 0-9]\+%\]' -e ' error: ' || { tail -500 build.log; false; }
+  (cd $CUBRID_SRCDIR \
+    && ./build.sh -p $CUBRID build) | tee build.log | grep -e '\[[ 0-9]\+%\]' -e ' error: ' || { tail -500 build.log; false; }
 }
 
 function run_test ()
 {
-  if [ ! -d $WORKDIR/cubrid-testtools -o ! -d $WORKDIR/cubrid-testcases ]; then
-    run_checkout
-  fi
+  run_checkout
 
   for t in ${TEST_SUITE//:/ }; do
     (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
@@ -92,6 +93,7 @@ function report_test ()
     answerfile=${f/\/cases\//\/answers\/}
     answerfile=${answerfile/%.sql/.answer}
     resultfile=${f/%.sql/.result}
+    reportfile=${f/%.sql/.report} && echo "<failure message='unexpected result'><![CDATA[" > $reportfile
 
     diffdir=$(mktemp -d)
     #egrep -v '^--|^$' $casefile | csplit -n0 -sz -f $diffdir/testcase - '/;/' '{*}'
@@ -117,7 +119,8 @@ function report_test ()
         echo "** Difference between Expected(-) and Actual(+) results:"
         diff -u $diffdir/answer$i $diffdir/result$i | tail -n+3
       fi
-    done
+    done | tee -a $reportfile
+    echo "]]></failure>" >> $reportfile
     rm -rf $diffdir
 
     if [ $max_print_failed -ne 0 -a $ncount -ge $max_print_failed ]; then
@@ -135,10 +138,10 @@ function report_test ()
     summary_xml_list=$(find $result_path -name summary.xml)
     for f in $summary_xml_list; do
       target=$(dirname ${f##*schedule_})
-      target=${target%_*}
-      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}" - $f || true
+      target=${target%_[0-9]*_*}
+      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}" --stringparam workdir "${WORKDIR}" - $f || true
 <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
- <xsl:output indent="yes"/>
+ <xsl:output indent="yes" cdata-section-elements="failure"/>
  <xsl:template match="results">
    <testsuites>
      <testsuite name="{$target}" tests="{count(scenario)}" failures="{count(scenario/result[contains(.,'fail')])}">
@@ -148,8 +151,10 @@ function report_test ()
  </xsl:template>
  <xsl:template match="scenario">
    <testcase classname="{$target}" name="{case}" time="{elapsetime div 1000}">
+   <xsl:variable name="testcase" select="case"/>
+   <xsl:variable name="report" select="concat($workdir, '/cubrid-testcases/', substring-before($testcase, '.sql'), '.report')"/>
       <xsl:if test="result='fail'">
-        <failure message="failed"/>
+        <xsl:copy-of select="document($report)"/>
       </xsl:if>
    </testcase>
  </xsl:template>
