@@ -88,6 +88,10 @@ function report_test ()
   fi
   echo ""
 
+  testcase_remote_url=$(cd $WORKDIR/cubrid-testcases && git config --get remote.origin.url)
+  testcase_hash=$(cd $WORKDIR/cubrid-testcases && git rev-parse HEAD)
+  testcase_base_url="${testcase_remote_url%.git}/blob/$testcase_hash"
+
   for f in $failed_list; do
     casefile=$f
     answerfile=${f/\/cases\//\/answers\/}
@@ -120,6 +124,9 @@ function report_test ()
         diff -u $diffdir/answer$i $diffdir/result$i | tail -n+3
       fi
     done | tee -a $reportfile
+    testcase_sql_url="$testcase_base_url/${casefile##*$WORKDIR/cubrid-testcases/}"
+    echo "$testcase_sql_url" >> $reportfile
+    echo "<a href='$testcase_sql_url' title='sql'>sql</a>" >> $reportfile
     echo "]]></failure>" >> $reportfile
     rm -rf $diffdir
 
