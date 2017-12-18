@@ -154,7 +154,8 @@ function report_test ()
     for f in $summary_xml_list; do
       target=$(dirname ${f##*schedule_})
       target=${target%_[0-9]*_*}
-      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}" --stringparam workdir "${WORKDIR}" - $f || true
+      build_mode=$(cubrid_rel | grep -oe 'release\|debug')
+      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}_${build_mode}" --stringparam workdir "${WORKDIR}" - $f || true
 <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
  <xsl:output indent="yes" cdata-section-elements="failure"/>
  <xsl:template match="results">
