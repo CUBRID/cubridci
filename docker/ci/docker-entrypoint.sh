@@ -117,9 +117,11 @@ function report_test ()
 
     ncount=$((ncount+1))
     printf "%115s\n" "($ncount/$nfailed)" | tr ' ' '-'
-    echo "** Testcase : ${casefile##*$WORKDIR/} (has $nq queries)"
-    echo "** Expected : ${answerfile##*$WORKDIR/}"
-    #echo "** Actual   : ${resultfile##*$WORKDIR/}"
+    testcases_case_url="$testcases_base_url/${casefile##*$testcases_root_dir/}"
+    testcases_answer_url="$testcases_base_url/${answerfile##*$testcases_root_dir/}"
+    echo "** Testcase : ${casefile##*$testcases_root_dir/} (has $nq queries) - $testcases_case_url" | tee -a $reportfile
+    echo "** Expected : ${answerfile##*$testcases_root_dir/} - $testcases_answer_url" | tee -a $reportfile
+    #echo "** Actual   : ${resultfile##*$testcases_root_dir/}"
     [ $nq -eq $na -a $nq -eq $nr ] || { echo "Parse error ($nq != $na != $nr)"; return 1; }
     for i in $(awk "BEGIN { for (i=0; i<$nq; i++) printf(\"%d \", i) }"); do
       if $(cmp -s $diffdir/answer$i $diffdir/result$i) ; then
@@ -131,10 +133,6 @@ function report_test ()
         diff -u $diffdir/answer$i $diffdir/result$i | tail -n+3
       fi
     done | tee -a $reportfile
-    testcases_case_url="$testcases_base_url/${casefile##*$testcases_root_dir/}"
-    testcases_answer_url="$testcases_base_url/${answerfile##*$testcases_root_dir/}"
-    echo "** TestCase: $testcases_case_url" >> $reportfile
-    echo "** Expected: $testcases_answer_url" >> $reportfile
     echo "]]></failure>" >> $reportfile
     rm -rf $diffdir
 
@@ -155,7 +153,7 @@ function report_test ()
       target=$(dirname ${f##*schedule_})
       target=${target%_[0-9]*_*}
       build_mode=$(cubrid_rel | grep -oe 'release\|debug')
-      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}_${build_mode}" --stringparam workdir "${WORKDIR}" - $f || true
+      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}_${build_mode}" --stringparam casedir "${testcases_root_dir}/" - $f || true
 <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
  <xsl:output indent="yes" cdata-section-elements="failure"/>
  <xsl:template match="results">
@@ -168,7 +166,7 @@ function report_test ()
  <xsl:template match="scenario">
    <testcase classname="{$target}" name="{case}" time="{elapsetime div 1000}">
    <xsl:variable name="testcase" select="case"/>
-   <xsl:variable name="report" select="concat($workdir, '/cubrid-testcases/', substring-before($testcase, '.sql'), '.report')"/>
+   <xsl:variable name="report" select="concat($casedir, substring-before($testcase, '.sql'), '.report')"/>
       <xsl:if test="result='fail'">
         <xsl:copy-of select="document($report)"/>
       </xsl:if>
@@ -183,7 +181,7 @@ _EOL
     echo "** There are $nfailed failed Testcases on this test."
     echo "** All failed Testcases are listed below:"
     for f in $failed_list ; do
-      echo " - ${f##*$WORKDIR/}"
+      echo " - ${f##*$testcases_root_dir/}"
     done
     echo "** $nfailed cases are failed."
     exit $nfailed
