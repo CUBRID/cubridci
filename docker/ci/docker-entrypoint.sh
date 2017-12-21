@@ -33,7 +33,22 @@ function run_build ()
   fi
 
   (cd $CUBRID_SRCDIR \
-    && ./build.sh -p $CUBRID build) | tee build.log | grep -e '\[[ 0-9]\+%\]' -e ' error: ' || { tail -500 build.log; false; }
+    && ./build.sh -p $CUBRID $@ build) | tee build.log | grep -e '\[[ 0-9]\+%\]' -e ' error: ' || { tail -500 build.log; false; }
+}
+
+function run_dist ()
+{
+  if [ -f ./build.sh ]; then
+    CUBRID_SRCDIR=.
+  elif [ -f cubrid/build.sh ]; then
+    CUBRID_SRCDIR=cubrid
+  else
+    echo "Cannot find CUBRID source directory!"
+    return 1
+  fi
+
+  (cd $CUBRID_SRCDIR \
+    && ./build.sh -p $CUBRID $@ dist) | tee dist.log
 }
 
 function run_test ()
@@ -221,7 +236,12 @@ case "$1" in
     set -- run_checkout
     ;;
   build)
-    set -- run_build
+    shift
+    set -- run_build "$@"
+    ;;
+  dist)
+    shift
+    set -- run_dist "$@"
     ;;
   test)
     set -- run_test
