@@ -28,7 +28,6 @@ ENV TZ Asia/Seoul
 RUN ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
 RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
 
-VOLUME $WORKDIR
 WORKDIR $WORKDIR
 
 COPY docker-entrypoint.sh /entrypoint.sh
