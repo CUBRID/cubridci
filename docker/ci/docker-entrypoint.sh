@@ -123,7 +123,7 @@ function report_test ()
 
     diffdir=$(mktemp -d)
     #egrep -v '^--|^$' $casefile | csplit -n0 -sz -f $diffdir/testcase - '/;/' '{*}'
-    egrep -v $'^--|^\s*$|^autocommit|^\r' $casefile | awk -v outdir="$diffdir" '{printf "%s;\n", $0 > outdir"/testcase"NR-1}' RS=';[ \t\r]*\n'
+    egrep -v $'^--|^\s*$|^autocommit|^\r|^\s*\$' $casefile | awk -v outdir="$diffdir" '{printf "%s;\n", $0 > outdir"/testcase"NR-1}' RS=';[ \t\r]*\n'
     nq=$(ls $diffdir/testcase* | wc -l)
     csplit -n0 -sz -f $diffdir/answer $answerfile '/===================================================/' '{*}'
     na=$(ls $diffdir/answer* | wc -l)
