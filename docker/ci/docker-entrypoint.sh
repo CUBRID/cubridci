@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash -le
 
 function run_checkout ()
 {
