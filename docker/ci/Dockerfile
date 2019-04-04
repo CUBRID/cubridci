@@ -4,11 +4,14 @@ LABEL Description="This is a build and test environment image for CUBRID"
 
 RUN set -x \
 	&& yum install -y centos-release-scl \
-	&& yum install -y --setopt=tsflags=nodocs devtoolset-6-gcc devtoolset-6-gcc-c++ devtoolset-6-make \
-		devtoolset-6-elfutils-libelf-devel devtoolset-6-systemtap-sdt-devel \
-		ncurses-devel cmake java-1.8.0-openjdk-devel ant flex git19 wget libxslt \
+	&& yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
+		devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
+		ncurses-devel cmake java-1.8.0-openjdk-devel ant flex rh-git29 wget libxslt \
 		rpm-build libtool libtool-ltdl autoconf automake \
 	&& yum clean all -y
+
+# enable rh-git29
+RUN echo 'source scl_source enable rh-git29' > /etc/profile.d/enable-rh-git29.sh
 
 # install bison 3 for PR #1125
 ENV BISON_VERSION 3.0.5
@@ -22,7 +25,7 @@ ENV JAVA_HOME /usr/lib/jvm/java
 # CUBRID envronment variables
 ENV CUBRID $WORKDIR/CUBRID
 ENV CUBRID_DATABASES $CUBRID/databases
-ENV PATH $CUBRID/bin:/opt/rh/git19/root/usr/bin:$PATH
+ENV PATH $CUBRID/bin:$PATH
 ENV LD_LIBRARY_PATH $CUBRID/lib
 ENV TEST_SUITE medium:sql
 ENV TEST_REPORT /tmp/tests
@@ -39,4 +42,4 @@ RUN chmod 777 $WORKDIR
 WORKDIR $WORKDIR
 
 COPY docker-entrypoint.sh /entrypoint.sh
-ENTRYPOINT ["scl", "enable", "devtoolset-6", "--", "/entrypoint.sh"]
+ENTRYPOINT ["scl", "enable", "devtoolset-8", "--", "/entrypoint.sh"]
