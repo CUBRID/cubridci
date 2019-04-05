@@ -34,9 +34,9 @@ ENV TZ Asia/Seoul
 RUN ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
 RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
 
-RUN chmod 777 $WORKDIR
+COPY docker-entrypoint.sh /entrypoint.sh
 
+RUN chmod 777 $WORKDIR
 WORKDIR $WORKDIR
 
-COPY docker-entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["scl", "enable", "devtoolset-8", "--", "/entrypoint.sh"]
