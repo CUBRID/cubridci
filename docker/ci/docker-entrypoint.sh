@@ -1,37 +1,59 @@
-#!/bin/bash -e
+#!/bin/bash -le
 
 function run_checkout ()
 {
-  if [ ! -d cubrid-testtools ]; then
+  if [ ! -d $WORKDIR/cubrid-testtools ]; then
     git clone -q --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools $WORKDIR/cubrid-testtools
+  elif [ -d $WORKDIR/cubrid-testtools/.git ]; then
+    (cd $WORKDIR/cubrid-testtools && git clean -df)
+  else
+    echo "Cannot find .git from $WORKDIR/cubrid-testtools directory!"
+    return 1
   fi
-  if [ ! -d cubrid-testcases ]; then
+  if [ ! -d $WORKDIR/cubrid-testcases ]; then
     git clone -q --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
+  elif [ -d $WORKDIR/cubrid-testcases/.git ]; then
+    (cd $WORKDIR/cubrid-testcases && git clean -df)
+  else
+    echo "Cannot find .git from $WORKDIR/cubrid-testcases directory!"
+    return 1
   fi
 
 }
 
 function run_build ()
 {
-  if [ ! -d cubrid ]; then
-    echo "Cannot find source directory!"
+  if [ -f ./build.sh ]; then
+    CUBRID_SRCDIR=.
+  elif [ -f cubrid/build.sh ]; then
+    CUBRID_SRCDIR=cubrid
+  else
+    echo "Cannot find CUBRID source directory!"
     return 1
   fi
 
-  if [ -d cubrid/build ]; then
-    rm -rf cubrid/build
+  (cd $CUBRID_SRCDIR \
+    && ./build.sh -p $CUBRID $@ clean build) | tee build.log | grep -e '\[[ 0-9]\+%\]' -e ' error: ' || { tail -500 build.log; false; }
+}
+
+function run_dist ()
+{
+  if [ -f ./build.sh ]; then
+    CUBRID_SRCDIR=.
+  elif [ -f cubrid/build.sh ]; then
+    CUBRID_SRCDIR=cubrid
+  else
+    echo "Cannot find CUBRID source directory!"
+    return 1
   fi
 
-  cmake -E make_directory cubrid/build
-  cmake -E chdir cubrid/build cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=$CUBRID ..
-  cmake --build cubrid/build --target install | tee build.log | grep -e '\[[ 0-9]\+%\]' -e ' error: ' || { tail -500 build.log; false; }
+  (cd $CUBRID_SRCDIR \
+    && ./build.sh -p $CUBRID $@ dist) | tee dist.log
 }
 
 function run_test ()
 {
-  if [ ! -d $WORKDIR/cubrid-testtools -o ! -d $WORKDIR/cubrid-testcases ]; then
-    run_checkout
-  fi
+  run_checkout
 
   for t in ${TEST_SUITE//:/ }; do
     (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
@@ -87,15 +109,21 @@ function report_test ()
   fi
   echo ""
 
+  testcases_root_dir="$WORKDIR/cubrid-testcases"
+  testcases_remote_url=$(cd $testcases_root_dir && git config --get remote.origin.url)
+  testcases_hash=$(cd $testcases_root_dir && git rev-parse HEAD)
+  testcases_base_url="${testcases_remote_url%.git}/blob/$testcases_hash"
+
   for f in $failed_list; do
     casefile=$f
     answerfile=${f/\/cases\//\/answers\/}
     answerfile=${answerfile/%.sql/.answer}
     resultfile=${f/%.sql/.result}
+    reportfile=${f/%.sql/.report} && echo "<failure message='unexpected result'><![CDATA[" > $reportfile
 
     diffdir=$(mktemp -d)
     #egrep -v '^--|^$' $casefile | csplit -n0 -sz -f $diffdir/testcase - '/;/' '{*}'
-    egrep -v $'^--|^\s*$|^autocommit|^\r' $casefile | awk -v outdir="$diffdir" '{printf "%s;\n", $0 > outdir"/testcase"NR-1}' RS=';[ \t\r]*\n'
+    egrep -v $'^--|^\s*$|^autocommit|^\r|^\s*\$' $casefile | awk -v outdir="$diffdir" '{printf "%s;\n", $0 > outdir"/testcase"NR-1}' RS=';[ \t\r]*\n'
     nq=$(ls $diffdir/testcase* | wc -l)
     csplit -n0 -sz -f $diffdir/answer $answerfile '/===================================================/' '{*}'
     na=$(ls $diffdir/answer* | wc -l)
@@ -104,9 +132,11 @@ function report_test ()
 
     ncount=$((ncount+1))
     printf "%115s\n" "($ncount/$nfailed)" | tr ' ' '-'
-    echo "** Testcase : ${casefile##*$WORKDIR/} (has $nq queries)"
-    echo "** Expected : ${answerfile##*$WORKDIR/}"
-    #echo "** Actual   : ${resultfile##*$WORKDIR/}"
+    testcases_case_url="$testcases_base_url/${casefile##*$testcases_root_dir/}"
+    testcases_answer_url="$testcases_base_url/${answerfile##*$testcases_root_dir/}"
+    echo "** Testcase : ${casefile##*$testcases_root_dir/} (has $nq queries) - $testcases_case_url" | tee -a $reportfile
+    echo "** Expected : ${answerfile##*$testcases_root_dir/} - $testcases_answer_url" | tee -a $reportfile
+    #echo "** Actual   : ${resultfile##*$testcases_root_dir/}"
     [ $nq -eq $na -a $nq -eq $nr ] || { echo "Parse error ($nq != $na != $nr)"; return 1; }
     for i in $(awk "BEGIN { for (i=0; i<$nq; i++) printf(\"%d \", i) }"); do
       if $(cmp -s $diffdir/answer$i $diffdir/result$i) ; then
@@ -117,7 +147,8 @@ function report_test ()
         echo "** Difference between Expected(-) and Actual(+) results:"
         diff -u $diffdir/answer$i $diffdir/result$i | tail -n+3
       fi
-    done
+    done | tee -a $reportfile
+    echo "]]></failure>" >> $reportfile
     rm -rf $diffdir
 
     if [ $max_print_failed -ne 0 -a $ncount -ge $max_print_failed ]; then
@@ -135,10 +166,11 @@ function report_test ()
     summary_xml_list=$(find $result_path -name summary.xml)
     for f in $summary_xml_list; do
       target=$(dirname ${f##*schedule_})
-      target=${target%_*}
-      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}" - $f || true
+      target=${target%_[0-9]*_*}
+      build_mode=$(cubrid_rel | grep -oe 'release\|debug')
+      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}_${build_mode}" --stringparam casedir "${testcases_root_dir}/" - $f || true
 <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
- <xsl:output indent="yes"/>
+ <xsl:output indent="yes" cdata-section-elements="failure"/>
  <xsl:template match="results">
    <testsuites>
      <testsuite name="{$target}" tests="{count(scenario)}" failures="{count(scenario/result[contains(.,'fail')])}">
@@ -148,8 +180,10 @@ function report_test ()
  </xsl:template>
  <xsl:template match="scenario">
    <testcase classname="{$target}" name="{case}" time="{elapsetime div 1000}">
+   <xsl:variable name="testcase" select="case"/>
+   <xsl:variable name="report" select="concat($casedir, substring-before($testcase, '.sql'), '.report')"/>
       <xsl:if test="result='fail'">
-        <failure message="failed"/>
+        <xsl:copy-of select="document($report)"/>
       </xsl:if>
    </testcase>
  </xsl:template>
@@ -162,7 +196,7 @@ _EOL
     echo "** There are $nfailed failed Testcases on this test."
     echo "** All failed Testcases are listed below:"
     for f in $failed_list ; do
-      echo " - ${f##*$WORKDIR/}"
+      echo " - ${f##*$testcases_root_dir/}"
     done
     echo "** $nfailed cases are failed."
     exit $nfailed
@@ -202,7 +236,12 @@ case "$1" in
     set -- run_checkout
     ;;
   build)
-    set -- run_build
+    shift
+    set -- run_build "$@"
+    ;;
+  dist)
+    shift
+    set -- run_dist "$@"
     ;;
   test)
     set -- run_test
