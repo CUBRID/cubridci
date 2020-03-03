@@ -1,11 +1,20 @@
-FROM centos:7
+FROM centos:6
 
 LABEL Description="This is a build and test environment image for CUBRID"
 
 RUN set -x \
-	&& yum -y groupinstall 'Development Tools' \
-	&& yum -y install which git cmake systemtap-sdt-devel ncurses-devel java-1.7.0-devel ant elfutils-libelf-devel wget \
-	&& yum clean all
+	&& yum install -y centos-release-scl \
+	&& yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
+		devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
+		ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
+		rpm-build libtool libtool-ltdl autoconf automake \
+	&& yum clean all -y
+
+# install bison 3 for PR #1125
+ENV BISON_VERSION 3.0.5
+RUN curl -L https://ftp.gnu.org/gnu/bison/bison-$BISON_VERSION.tar.gz | tar xzvf - \
+    && cd bison-$BISON_VERSION && ./configure --prefix=/usr && make all install \
+    && rm -rf bison-$BISON_VERSION
 
 ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
@@ -13,7 +22,7 @@ ENV JAVA_HOME /usr/lib/jvm/java
 # CUBRID envronment variables
 ENV CUBRID $WORKDIR/CUBRID
 ENV CUBRID_DATABASES $CUBRID/databases
-ENV PATH $CUBRID/bin:$PATH
+ENV PATH $CUBRID/bin:/opt/rh/sclo-git212/root/usr/bin:$PATH
 ENV LD_LIBRARY_PATH $CUBRID/lib
 ENV TEST_SUITE medium:sql
 ENV TEST_REPORT /tmp/tests
@@ -25,8 +34,9 @@ ENV TZ Asia/Seoul
 RUN ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
 RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
 
-VOLUME $WORKDIR
+COPY docker-entrypoint.sh /entrypoint.sh
+
+RUN chmod 777 $WORKDIR
 WORKDIR $WORKDIR
 
-COPY docker-entrypoint.sh /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["scl", "enable", "devtoolset-8", "--", "/entrypoint.sh"]
