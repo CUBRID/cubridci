@@ -26,7 +26,7 @@ ENV PATH $CUBRID/bin:/opt/rh/sclo-git212/root/usr/bin:$PATH
 ENV LD_LIBRARY_PATH $CUBRID/lib
 ENV TEST_SUITE medium:sql
 ENV TEST_REPORT /tmp/tests
-ENV BRANCH_TESTTOOLS master
+ENV BRANCH_TESTTOOLS develop
 ENV BRANCH_TESTCASES develop
 
 # set timezone for test
