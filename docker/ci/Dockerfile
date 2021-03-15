@@ -15,7 +15,7 @@ RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.ce
 RUN set -x \
         && yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
                 devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
-                ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
+                ncurses-devel java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
         && yum clean all -y
 
@@ -25,13 +25,19 @@ RUN curl -L https://ftp.gnu.org/gnu/bison/bison-$BISON_VERSION.tar.gz | tar xzvf
     && cd bison-$BISON_VERSION && ./configure --prefix=/usr && make all install \
     && rm -rf bison-$BISON_VERSION
 
+# install cmake 3.19.6 for PR #2604
+ENV CMAKE_VERSION 3.19.6
+RUN curl -L https://github.com/Kitware/CMake/releases/download/v3.19.6/cmake-$CMAKE_VERSION-Linux-x86_64.tar.gz | tar xzvf - \
+    && mv cmake-$CMAKE_VERSION-Linux-x86_64 /usr/  \
+    && rm -rf cmake-$CMAKE_VERSION-Linux-x86_64.tar.gz 
+
 ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
 
 # CUBRID envronment variables
 ENV CUBRID $WORKDIR/CUBRID
 ENV CUBRID_DATABASES $CUBRID/databases
-ENV PATH $CUBRID/bin:/opt/rh/sclo-git212/root/usr/bin:$PATH
+ENV PATH $CUBRID/bin:/opt/rh/sclo-git212/root/usr/bin:/usr/cmake-$CMAKE_VERSION-Linux-x86_64/bin:$PATH
 ENV LD_LIBRARY_PATH $CUBRID/lib
 ENV TEST_SUITE medium:sql
 ENV TEST_REPORT /tmp/tests
