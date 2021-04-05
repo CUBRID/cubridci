@@ -55,6 +55,10 @@ function run_test ()
 {
   run_checkout
 
+  cd $WORKDIR/cubrid-testtools
+  CTP/bin/ini.sh -s sql/cubrid.conf CTP/conf/sql.conf dont_reuse_heap_file yes
+  cd -
+
   for t in ${TEST_SUITE//:/ }; do
     (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
   done
