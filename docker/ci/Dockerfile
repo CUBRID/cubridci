@@ -2,8 +2,17 @@ FROM centos:6
 
 LABEL Description="This is a build and test environment image for CUBRID"
 
+RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-Base.repo
+RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-Base.repo
+
+RUN yum install -y centos-release-scl
+
+RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl.repo
+RUN sed -i -e "s/^# baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl.repo
+RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
+RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
+
 RUN set -x \
-	&& yum install -y centos-release-scl \
 	&& yum install -y --setopt=tsflags=nodocs gcc gcc-c++ autoconf automake libtool rpm-build flex bison cmake sclo-git212 \
 	&& yum install -y --setopt=tsflags=nodocs systemtap-sdt-devel ncurses-devel java-1.7.0-devel ant elfutils-libelf-devel wget libxslt \
 	&& yum clean all
