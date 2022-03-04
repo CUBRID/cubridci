@@ -100,6 +100,13 @@ function report_test ()
     return 1
   fi
 
+  #In case of testing nothing due to an error like failure to load a library.
+  if [ `find $result_path -type f -name summary_info | wc -l` -eq 0 ]; then
+     echo "Nothing is tested because of an error."
+     exit 1 
+  fi
+
+
   failed_list=$(find $result_path -name summary_info | xargs -n1 grep -hw nok | awk -F: '{print $1}')
   if [ -z "$failed_list" ]; then
     nfailed=0
