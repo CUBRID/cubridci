@@ -38,7 +38,7 @@ ENV JAVA_HOME /usr/lib/jvm/java
 ENV CUBRID $WORKDIR/CUBRID
 ENV CUBRID_DATABASES $CUBRID/databases
 ENV PATH $CUBRID/bin:/opt/rh/sclo-git212/root/usr/bin:/usr/cmake-$CMAKE_VERSION-Linux-x86_64/bin:$PATH
-ENV LD_LIBRARY_PATH $CUBRID/lib
+ENV LD_LIBRARY_PATH $CUBRID/lib:$CUBRID/cci/lib
 ENV TEST_SUITE medium:sql
 ENV TEST_REPORT /tmp/tests
 ENV BRANCH_TESTTOOLS develop
