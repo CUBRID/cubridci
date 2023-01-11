@@ -5,9 +5,9 @@ LABEL Description="This is a build and test environment image for CUBRID on orac
 RUN yum install -y oracle-softwarecollection-release-el7
 
 RUN set -x \
-	&& yum update -y \
-        && yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
-                devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
+        && yum update -y \
+        && yum install -y --setopt=tsflags=nodocs devtoolset-9-gcc devtoolset-9-gcc-c++ devtoolset-9-make \
+                devtoolset-9-elfutils-libelf-devel devtoolset-9-systemtap-sdt-devel \
                 ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake make git which \
         && yum clean all -y
@@ -46,4 +46,4 @@ RUN chmod 777 /entrypoint.sh
 RUN chmod 777 $WORKDIR
 WORKDIR $WORKDIR
 
-ENTRYPOINT ["scl", "enable", "devtoolset-8", "--", "/entrypoint.sh"]
+ENTRYPOINT ["scl", "enable", "devtoolset-9", "--", "/entrypoint.sh"]
