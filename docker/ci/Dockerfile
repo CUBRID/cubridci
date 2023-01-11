@@ -1,49 +1,41 @@
-FROM oraclelinux:7.8
+FROM ubuntu:focal
 
-LABEL Description="This is a build and test environment image for CUBRID on oracle linux"
+LABEL Description="This is a build and test environment image for CUBRID on ubuntu image"
 
-RUN yum install -y oracle-softwarecollection-release-el7
-
-RUN set -x \
-        && yum update -y \
-        && yum install -y --setopt=tsflags=nodocs devtoolset-9-gcc devtoolset-9-gcc-c++ devtoolset-9-make \
-                devtoolset-9-elfutils-libelf-devel devtoolset-9-systemtap-sdt-devel \
-                ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
-                rpm-build libtool libtool-ltdl autoconf automake make git which \
-        && yum clean all -y
-
-# install bison 3 for PR #1125
-ENV BISON_VERSION 3.0.5
-RUN curl -L https://ftp.gnu.org/gnu/bison/bison-$BISON_VERSION.tar.gz | tar xzvf - \
-    && cd bison-$BISON_VERSION && ./configure --prefix=/usr && make all install \
-    && rm -rf bison-$BISON_VERSION
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update  \
+    && apt-get install openjdk-8-jdk locales git vim -y \
+    && apt-get install gcc-9 g++-9 libncurses5 -y
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 110 --slave /usr/bin/g++ g++ /usr/bin/g++-9
 
 ENV WORKDIR /home
-ENV JAVA_HOME /usr/lib/jvm/java
+ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64
 
 # CUBRID envronment variables
 ENV CUBRID $WORKDIR/CUBRID
 ENV CUBRID_DATABASES $CUBRID/databases
-ENV PATH $CUBRID/bin:/opt/rh/sclo-git212/root/usr/bin:$PATH
+ENV PATH $CUBRID/bin:$PATH
 ENV LD_LIBRARY_PATH $CUBRID/lib:$CUBRID/cci/lib
 ENV TEST_SUITE medium:sql
 ENV TEST_REPORT /tmp/tests
 ENV BRANCH_TESTTOOLS develop
 ENV BRANCH_TESTCASES develop
 
+
+#bash
+RUN ln -sf /bin/bash /bin/sh
+
 # set timezone for test
-ENV TZ Asia/Seoul
 RUN ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
-RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
 
 # install multi-language locale for unicode test
-RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
-RUN localedef -f EUC-KR -i ko_KR ko_KR.euckr
+#RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
+#RUN localedef -f EUC-KR -i ko_KR ko_KR.euckr
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
+RUN locale-gen
 
 COPY docker-entrypoint.sh /entrypoint.sh
-RUN chmod 777 /entrypoint.sh
 
+RUN chmod 775 /entrypoint.sh
 RUN chmod 777 $WORKDIR
 WORKDIR $WORKDIR
-
-ENTRYPOINT ["scl", "enable", "devtoolset-9", "--", "/entrypoint.sh"]
