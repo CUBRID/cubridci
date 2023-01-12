@@ -29,8 +29,6 @@ RUN ln -sf /bin/bash /bin/sh
 RUN ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
 
 # install multi-language locale for unicode test
-#RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
-#RUN localedef -f EUC-KR -i ko_KR ko_KR.euckr
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 RUN locale-gen
 
