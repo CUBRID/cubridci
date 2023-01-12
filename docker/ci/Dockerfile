@@ -13,8 +13,8 @@ RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\
 RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
 
 RUN set -x \
-        && yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
-                devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
+        && yum install -y --setopt=tsflags=nodocs devtoolset-9-gcc devtoolset-9-gcc-c++ devtoolset-9-make \
+                devtoolset-9-elfutils-libelf-devel devtoolset-9-systemtap-sdt-devel \
                 ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
         && yum clean all -y
@@ -52,4 +52,4 @@ COPY docker-entrypoint.sh /entrypoint.sh
 RUN chmod 777 $WORKDIR
 WORKDIR $WORKDIR
 
-ENTRYPOINT ["scl", "enable", "devtoolset-8", "--", "/entrypoint.sh"]
+ENTRYPOINT ["scl", "enable", "devtoolset-9", "--", "/entrypoint.sh"]
