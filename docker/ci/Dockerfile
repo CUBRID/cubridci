@@ -44,6 +44,7 @@ RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
 
 COPY docker-entrypoint.sh /entrypoint.sh
 
+RUN chmod 775 /entrypoint.sh
 RUN chmod 777 $WORKDIR
 WORKDIR $WORKDIR
 
