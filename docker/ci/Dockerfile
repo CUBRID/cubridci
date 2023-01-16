@@ -8,7 +8,7 @@ RUN set -x \
 	&& yum update -y \
         && yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
                 devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
-                ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
+                ncurses-devel cmake java-1.8.0-openjdk-devel ant flex wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake make git which \
         && yum clean all -y
 
