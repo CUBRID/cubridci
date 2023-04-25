@@ -34,7 +34,7 @@ RUN curl -L https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/c
 ENV NINJA_VERSION 1.11.1
 RUN source scl_source enable devtoolset-8 \
 	&& curl -L https://github.com/ninja-build/ninja/archive/refs/tags/v$NINJA_VERSION.tar.gz | tar xzvf - \
-    && cd ninja-$NINJA_VERSION && cmake -Bbuild-cmake && cmake --build build-cmake
+    && cd ninja-$NINJA_VERSION && cmake -Bbuild-cmake && cmake --build build-cmake \
     && mv build-cmake/ninja /usr/bin/ninja
 
 ENV WORKDIR /home
