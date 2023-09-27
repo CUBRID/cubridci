@@ -62,6 +62,10 @@ function run_test ()
   CTP/bin/ini.sh -s sql/cubrid.conf CTP/conf/medium.conf create_table_reuseoid no
   cd -
 
+  cd $WORKDIR/cubrid-testtools/CTP
+  ant dist
+  cd -
+
   for t in ${TEST_SUITE//:/ }; do
     (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
   done
