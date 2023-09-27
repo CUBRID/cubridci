@@ -63,7 +63,7 @@ function run_test ()
   cd -
 
   cd $WORKDIR/cubrid-testtools/CTP
-  ant clean dist
+  ant dist
   cd -
 
   for t in ${TEST_SUITE//:/ }; do
