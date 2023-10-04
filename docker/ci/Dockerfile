@@ -29,7 +29,7 @@ ENV LD_LIBRARY_PATH $CUBRID/lib:$CUBRID/cci/lib
 ENV TEST_SUITE medium:sql
 ENV TEST_REPORT /tmp/tests
 ENV BRANCH_TESTTOOLS develop
-ENV BRANCH_TESTCASES develop
+ENV BRANCH_TESTCASES release/11.3
 
 # set timezone for test
 ENV TZ Asia/Seoul
