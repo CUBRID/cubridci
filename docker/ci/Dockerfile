@@ -31,6 +31,9 @@ ENV TEST_REPORT /tmp/tests
 ENV BRANCH_TESTTOOLS develop
 ENV BRANCH_TESTCASES develop
 
+# Temporary
+ENV JAVA_TOOL_OPTIONS -Dfile.encoding=UTF8 
+
 # set timezone for test
 ENV TZ Asia/Seoul
 RUN ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
