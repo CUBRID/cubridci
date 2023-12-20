@@ -23,13 +23,21 @@ RUN set -x \
 ENV BISON_VERSION 3.0.5
 RUN curl -L https://ftp.gnu.org/gnu/bison/bison-$BISON_VERSION.tar.gz | tar xzvf - \
     && cd bison-$BISON_VERSION && ./configure --prefix=/usr && make all install \
-    && rm -rf bison-$BISON_VERSION
+    && rm -rf bison-$BISON_VERSION && cd ..
 
-# install cmake 3.19.6 for PR #2604
-ENV CMAKE_VERSION 3.19.6
-RUN curl -L https://github.com/Kitware/CMake/releases/download/v3.19.6/cmake-$CMAKE_VERSION-Linux-x86_64.tar.gz | tar xzvf - \
-    && mv cmake-$CMAKE_VERSION-Linux-x86_64 /usr/  \
-    && rm -rf cmake-$CMAKE_VERSION-Linux-x86_64.tar.gz 
+# install cmake 3.26
+ENV CMAKE_VERSION 3.26.3
+RUN curl -L https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-x86_64.tar.gz | tar xzvf - \
+ && yes | cp -fR cmake-$CMAKE_VERSION-linux-x86_64/* /usr \
+ && rm -rf cmake-$CMAKE_VERSION-linux-x86_64
+
+# install ninja generator
+ENV NINJA_VERSION 1.11.1
+RUN source scl_source enable devtoolset-8 \
+	&& curl -L https://github.com/ninja-build/ninja/archive/refs/tags/v$NINJA_VERSION.tar.gz | tar xzvf - \
+    && cd ninja-$NINJA_VERSION && cmake -Bbuild-cmake && cmake --build build-cmake \
+    && mv build-cmake/ninja /usr/bin/ninja && cd .. \
+    && rm -rf ninja-$NINJA_VERSION
 
 ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
