@@ -39,12 +39,6 @@ RUN source scl_source enable devtoolset-8 \
     && mv build-cmake/ninja /usr/bin/ninja && cd .. \
     && rm -rf ninja-$NINJA_VERSION
 
-# install cmake 3.19.6 for PR #2604
-ENV CMAKE_VERSION 3.19.6
-RUN curl -L https://github.com/Kitware/CMake/releases/download/v3.19.6/cmake-$CMAKE_VERSION-Linux-x86_64.tar.gz | tar xzvf - \
-    && mv cmake-$CMAKE_VERSION-Linux-x86_64 /usr/  \
-    && rm -rf cmake-$CMAKE_VERSION-Linux-x86_64.tar.gz 
-
 ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
 
