@@ -1,5 +1,5 @@
 FROM centos:7
-
+ 
 LABEL Description="This is a build and test environment image for CUBRID"
 
 RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-Base.repo
