@@ -1,4 +1,4 @@
-FROM centos:7
+FROM centos:7.7.1908
  
 LABEL Description="This is a build and test environment image for CUBRID"
 
@@ -8,7 +8,7 @@ RUN set -x \
         && yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
                 devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
                 ncurses-devel java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
-                rpm-build libtool libtool-ltdl autoconf automake \
+                rpm-build libtool libtool-ltdl autoconf automake which \
 	&& yum groupinstall -y 'Development Tools' \
         && yum clean all -y
 
