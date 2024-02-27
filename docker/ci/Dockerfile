@@ -1,29 +1,23 @@
-FROM centos:6
-
+FROM centos:7.7.1908
+ 
 LABEL Description="This is a build and test environment image for CUBRID"
 
-RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-Base.repo
-RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-Base.repo
-
 RUN yum install -y centos-release-scl
-
-RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl.repo
-RUN sed -i -e "s/^# baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl.repo
-RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
-RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
 
 RUN set -x \
         && yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
                 devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
                 ncurses-devel java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
-                rpm-build libtool libtool-ltdl autoconf automake \
+                rpm-build libtool libtool-ltdl autoconf automake which \
+	&& yum groupinstall -y 'Development Tools' \
         && yum clean all -y
+
 
 # install bison 3 for PR #1125
 ENV BISON_VERSION 3.0.5
 RUN curl -L https://ftp.gnu.org/gnu/bison/bison-$BISON_VERSION.tar.gz | tar xzvf - \
     && cd bison-$BISON_VERSION && ./configure --prefix=/usr && make all install \
-    && rm -rf bison-$BISON_VERSION && cd ..
+    && cd .. && rm -rf bison-$BISON_VERSION
 
 # install cmake 3.26
 ENV CMAKE_VERSION 3.26.3
