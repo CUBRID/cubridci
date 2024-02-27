@@ -9,13 +9,15 @@ RUN set -x \
                 devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
                 ncurses-devel java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
+	&& yum groupinstall -y 'Development Tools' \
         && yum clean all -y
+
 
 # install bison 3 for PR #1125
 ENV BISON_VERSION 3.0.5
 RUN curl -L https://ftp.gnu.org/gnu/bison/bison-$BISON_VERSION.tar.gz | tar xzvf - \
     && cd bison-$BISON_VERSION && ./configure --prefix=/usr && make all install \
-    && rm -rf bison-$BISON_VERSION && cd ..
+    && cd .. && rm -rf bison-$BISON_VERSION
 
 # install cmake 3.26
 ENV CMAKE_VERSION 3.26.3
