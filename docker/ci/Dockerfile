@@ -19,4 +19,4 @@ RUN ln -nsf /usr/bin/openssl11 /usr/bin/openssl
 
 RUN pip3.9 install 'urllib3<2.0' Sphinx==7.2.6 pydata-sphinx-theme==0.15.2 \
     sphinx_design sphinx_copybutton myst_parser ablog sphinxcontrib.youtube \
-    nbsphinx numpydoc sphinx_togglebutton sphinx_favicon sphinx_sitemap
+    nbsphinx numpydoc sphinx_togglebutton sphinx_favicon sphinx_sitemap rst2pdf
