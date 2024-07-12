@@ -4,8 +4,14 @@ LABEL Description="This is a build image for CUBRID manual"
 RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-Base.repo
 RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-Base.repo
 
-RUN yum install -y git gcc make openssl-devel bzip2-devel libffi-devel zlib-devel \
+RUN yum install -y git gcc make openssl-devel bzip2-devel libffi-devel zlib-devel unzip \
    && yum clean all -y
+
+RUN yum install -y fontconfig \
+    && curl -o nanumfont.zip http://cdn.naver.com/naver/NanumFont/fontfiles/NanumFont_TTF_ALL.zip \
+    && mkdir -p /usr/share/fonts/nanum \
+    && unzip -d /usr/share/fonts/nanum nanumfont.zip \
+    && rm nanumfont.zip
 
 RUN yum install -y epel-release
 RUN yum install -y openssl11 openssl11-devel
@@ -22,3 +28,5 @@ RUN curl -L https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_
 RUN pip3.10 install 'urllib3<2.0' Sphinx==7.3.7 pydata-sphinx-theme==0.15.4 \
     sphinx_design sphinx_copybutton myst_parser ablog sphinxcontrib.youtube \
     nbsphinx numpydoc sphinx_togglebutton sphinx_favicon sphinx_sitemap
+
+RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
