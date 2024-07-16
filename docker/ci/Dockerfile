@@ -5,6 +5,7 @@ RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\
 RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-Base.repo
 
 RUN yum install -y git gcc make openssl-devel bzip2-devel libffi-devel zlib-devel unzip \
+   pango cairo gdk-pixbuf2 \
    && yum clean all -y
 
 RUN yum install -y fontconfig \
@@ -25,8 +26,11 @@ RUN curl -L https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_
     && make altinstall \
     && cd .. && rm -rf "./Python-$PYTHON_VERSION/"
 
+RUN python3.10 -m pip install --upgrade pip
+
 RUN pip3.10 install 'urllib3<2.0' Sphinx==7.3.7 pydata-sphinx-theme==0.15.4 \
     sphinx_design sphinx_copybutton myst_parser ablog sphinxcontrib.youtube \
-    nbsphinx numpydoc sphinx_togglebutton sphinx_favicon sphinx_sitemap
+    nbsphinx numpydoc sphinx_togglebutton sphinx_favicon sphinx_sitemap \
+    weasyprint==52.5 sphinx-simplepdf
 
 RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
