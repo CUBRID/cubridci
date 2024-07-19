@@ -8,7 +8,6 @@ RUN yum remove -y git
 RUN yum install -y http://opensource.wandisco.com/centos/7/git/x86_64/wandisco-git-release-7-1.noarch.rpm git \
    gcc make openssl-devel bzip2-devel libffi-devel zlib-devel unzip \
    pango cairo gdk-pixbuf2 \
-   http://opensource.wandisco.com/centos/7/git/x86_64/wandisco-git-release-7-1.noarch.rpm \
    && yum clean all -y
 
 RUN yum install -y fontconfig \
