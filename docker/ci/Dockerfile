@@ -74,5 +74,4 @@ RUN chmod 775 /entrypoint.sh
 RUN chmod 777 $WORKDIR
 WORKDIR $WORKDIR
 
-ENTRYPOINT ["/bin/bash"]
-# ENTRYPOINT ["scl", "enable", "devtoolset-8", "--", "/entrypoint.sh"]
+ENTRYPOINT ["scl", "enable", "devtoolset-8", "--", "/entrypoint.sh"]
