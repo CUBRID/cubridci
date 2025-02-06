@@ -41,6 +41,7 @@ RUN source scl_source enable devtoolset-8 \
 
 RUN set -x \
         yum install -y openblas lapack openblas-devel lapack-devel
+RUN set -x yum install -y devtoolset-8-gcc-gfortran
 
 ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
