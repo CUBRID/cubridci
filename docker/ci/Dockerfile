@@ -39,6 +39,9 @@ RUN source scl_source enable devtoolset-8 \
     && mv build-cmake/ninja /usr/bin/ninja && cd .. \
     && rm -rf ninja-$NINJA_VERSION
 
+RUN set -x \
+        yum install -y openblas lapack openblas-devel lapack-devel
+
 ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
 
