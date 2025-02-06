@@ -40,11 +40,11 @@ RUN source scl_source enable devtoolset-8 \
     && rm -rf ninja-$NINJA_VERSION
 
 RUN set -x \
-        yum install -y epel-release
+        && yum install -y epel-release
 RUN set -x \
-        yum install -y openblas lapack openblas-devel lapack-devel
+        && yum install -y openblas lapack openblas-devel lapack-devel
 RUN set -x \
-        yum install -y devtoolset-8-gcc-gfortran
+        && yum install -y devtoolset-8-gcc-gfortran
 
 ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
@@ -74,4 +74,5 @@ RUN chmod 775 /entrypoint.sh
 RUN chmod 777 $WORKDIR
 WORKDIR $WORKDIR
 
-ENTRYPOINT ["scl", "enable", "devtoolset-8", "--", "/entrypoint.sh"]
+ENTRYPOINT ["/bin/bash"]
+# ENTRYPOINT ["scl", "enable", "devtoolset-8", "--", "/entrypoint.sh"]
