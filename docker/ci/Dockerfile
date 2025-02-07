@@ -45,6 +45,8 @@ RUN set -x \
         && yum install -y openblas lapack openblas-devel lapack-devel
 RUN set -x \
         && yum install -y devtoolset-8-gcc-gfortran
+RUN set -x \
+        && yum install -y git which
 
 ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
