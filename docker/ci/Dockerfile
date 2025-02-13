@@ -12,12 +12,40 @@ RUN sed -i -e "s/^# baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.c
 RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
 RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
 
-RUN set -x \
-        && yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
-                devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
-                ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
-                rpm-build libtool libtool-ltdl autoconf automake make \
-        && yum clean all -y
+RUN set -x && \
+    yum install -y epel-release && \
+    yum install -y --setopt=tsflags=nodocs \
+        devtoolset-8-gcc \
+        devtoolset-8-gcc-c++ \
+        devtoolset-8-make \
+        devtoolset-8-elfutils-libelf-devel \
+        devtoolset-8-systemtap-sdt-devel \
+        ncurses-devel \
+        cmake \
+        java-1.8.0-openjdk-devel \
+        ant \
+        flex \
+        sclo-git212 \
+        wget \
+        libxslt \
+        rpm-build \
+        libtool \
+        libtool-ltdl \
+        autoconf \
+        automake \
+        make \
+        git \
+        which \
+    && yum clean all -y
+
+RUN set -x && \
+    yum install -y --setopt=tsflags=nodocs \
+        openblas \
+        lapack \
+        openblas-devel \
+        lapack-devel \
+        devtoolset-8-gcc-gfortran \
+    && yum clean all -y
 
 # install bison 3 for PR #1125
 ENV BISON_VERSION 3.0.5
@@ -38,15 +66,6 @@ RUN source scl_source enable devtoolset-8 \
     && cd ninja-$NINJA_VERSION && cmake -Bbuild-cmake && cmake --build build-cmake \
     && mv build-cmake/ninja /usr/bin/ninja && cd .. \
     && rm -rf ninja-$NINJA_VERSION
-
-RUN set -x \
-        && yum install -y epel-release
-RUN set -x \
-        && yum install -y openblas lapack openblas-devel lapack-devel
-RUN set -x \
-        && yum install -y devtoolset-8-gcc-gfortran
-RUN set -x \
-        && yum install -y git which
 
 ENV WORKDIR /home
 ENV JAVA_HOME /usr/lib/jvm/java
