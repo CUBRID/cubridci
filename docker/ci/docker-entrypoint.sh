@@ -1,274 +1,245 @@
 #!/bin/bash -le
 
-function run_checkout ()
-{
-  if [ ! -d $WORKDIR/cubrid-testtools ]; then
-    git clone -q --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools $WORKDIR/cubrid-testtools
-  elif [ -d $WORKDIR/cubrid-testtools/.git ]; then
-    (cd $WORKDIR/cubrid-testtools && git clean -df)
-  else
-    echo "Cannot find .git from $WORKDIR/cubrid-testtools directory!"
-    return 1
-  fi
-  if [ ! -d $WORKDIR/cubrid-testcases ]; then
-    git clone -q --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
-  elif [ -d $WORKDIR/cubrid-testcases/.git ]; then
-    (cd $WORKDIR/cubrid-testcases && git clean -df)
-  else
-    echo "Cannot find .git from $WORKDIR/cubrid-testcases directory!"
-    return 1
-  fi
+DEBUG=true
 
+
+# Function to print debug messages
+debug() {
+  [ "$DEBUG" = true ] && echo "[debug] $1 : $2"
 }
 
-function run_build ()
-{
-  if [ -f ./build.sh ]; then
-    CUBRID_SRCDIR=.
-  elif [ -f cubrid/build.sh ]; then
-    CUBRID_SRCDIR=cubrid
+# Function to set up environment variables
+configure() {
+  debug "configure user=$user" "$LINENO"
+
+  sudo /usr/sbin/sshd
+
+  debug "`env`" "$LINENO"
+  debug "configure done. $ENV" "$LINENO"
+}
+
+# Function to clone Git repository
+clone_repository() {
+  local repo=$1
+  local branch=$2
+  #local url="https://${GITHUB_TOKEN}@github.com/CUBRID/$repo.git"
+  local url="https://${GITHUB_TOKEN}@github.com/tw-kang/$repo.git"
+  
+  debug "clone_repository $repo $branch $url" "$LINENO"
+  if [ ! -d "$WORKDIR/$repo" ]; then
+    sudo -E -u "$USER" bash -c "git clone -q --depth 1 --branch $branch $url $WORKDIR/$repo"
+  elif [ -d "$WORKDIR/$repo" ]; then
+    sudo -E -u "$USER" bash -c "cd $WORKDIR/$repo && git fetch --depth 1 origin $branch && git reset --hard origin/$branch && git clean -df"
   else
-    echo "Cannot find CUBRID source directory!"
+    debug "Cannot find .git from $WORKDIR/$repo directory!" "$LINENO"
+    exit 1
+  fi
+  debug "`ls -la $WORKDIR/$repo`" "$LINENO"
+}
+
+# Git configuration and repository cloning
+run_checkout() {
+  debug "run_checkout user=$USER" "$LINENO"
+
+  configure
+  
+  clone_repository "cubrid-testtools" "$CTP_BRANCH_NAME"  
+  clone_repository "cubrid-testcases" "develop"
+  clone_repository "cubrid-testcases-private-ex" "develop"
+  
+}
+
+
+# Function to run tests
+run_test() {
+  debug "run_test()" "$LINENO"
+  local feedback_file="$CTP_HOME/result/shell/current_runtime_logs/feedback.log"
+  
+  ( cd $CTP_HOME && HOME=$WORKDIR ./bin/ctp.sh shell )
+  
+  set +e
+  report_test $TEST_REPORT $feedback_file
+  ret=$?
+  set -e
+  if [ $ret -gt 0 ]; then
+    run_manual_test_result $TEST_REPORT $BASELINE
+  fi
+
+  debug "run_test() exit $ret" "$LINENO"
+  exit $ret
+}
+
+# Function to report test results
+report_test() {
+  debug "report_test()" "$LINENO"
+  local xml_output=$1
+  local xml_file=$xml_output/test-${TEST_SUITE}.xml
+  local feedback_file=$2
+
+  # Validate input
+  if [ ! -f "$feedback_file" ]; then
+    debug "feedback.log not found in $CTP_HOME/result/shell/current_runtime_logs" "$LINENO"
     return 1
   fi
 
-  (cd $CUBRID_SRCDIR \
-    && ./build.sh -p $CUBRID $@ clean build) | tee build.log | grep -e '\[[ 0-9]\+%\]' -e ' error: ' -e '\[[0-9]\+\/[0-9]\+\]' || { tail -500 build.log; false; }
+  # Get test summary from feedback.log
+  local test_category=$(tail -n 10 "$feedback_file" | grep "Test Category:" | awk -F':' '{print $2}')
+  local total_case_count=$(tail -n 10 "$feedback_file" | grep "Total Case:" | awk -F':' '{print $2}')
+  local total_execution_count=$(tail -n 10 "$feedback_file" | grep "Total Execution Case:" | awk -F':' '{print $2}')
+  local total_success_case_count=$(tail -n 10 "$feedback_file" | grep "Total Success Case:" | awk -F':' '{print $2}')
+  local total_fail_case_count=$(tail -n 10 "$feedback_file" | grep "Total Fail Case:" | awk -F':' '{print $2}')
+  local total_skip_case_count=$(tail -n 10 "$feedback_file" | grep "Total Skip Case:" | awk -F':' '{print $2}')
+  local elapse_time=$(tail -n 10 "$feedback_file" | grep "Elapse Time:" | awk -F':' '{print $2}')
 
-  grep "Building failed" $CUBRID_SRCDIR/build.log && exit 1 || { true; }  
-}
+  # Prepare output directory and file
+  mkdir -p "$xml_output"
+  
+  # Initialize XML file with header
+  cat > "$xml_file" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="$test_category" tests="$total_case_count" failures="$total_fail_case_count" skipped="$total_skip_case_count" time="$elapse_time">
+EOF
 
-function run_dist ()
-{
-  if [ -f ./build.sh ]; then
-    CUBRID_SRCDIR=.
-  elif [ -f cubrid/build.sh ]; then
-    CUBRID_SRCDIR=cubrid
-  else
-    echo "Cannot find CUBRID source directory!"
-    return 1
-  fi
-
-  (cd $CUBRID_SRCDIR \
-    && ./build.sh -p $CUBRID $@ dist) | tee dist.log
-}
-
-function run_test ()
-{
-  run_checkout
-
-  #CUBRIDQA-1093. disable reuse_oid 
-  cd $WORKDIR/cubrid-testtools
-  CTP/bin/ini.sh -s sql/cubrid.conf CTP/conf/medium.conf create_table_reuseoid no
-  cd -
-
-  for t in ${TEST_SUITE//:/ }; do
-    (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
-  done
-
-  if [[ ":$TEST_SUITE:" =~ :(medium|sql): ]]; then
-    report_test -x $TEST_REPORT $WORKDIR/cubrid-testtools/CTP/sql/result
-  fi
-}
-
-function report_test ()
-{
-  local ncount=0
-  local max_print_failed=50
-
-  while getopts "x:n:" opt; do
-    case $opt in
-      x)
-        xml_output="$OPTARG"
-        [ ! -d "$xml_output" ] && mkdir -p "$xml_output"
+  # Test case tracking variables
+  local test_name=""
+  local test_time=""
+  local test_result=""
+  local is_timeout=false
+  # Define test status constants
+  local -r TEST_STATUS_OK="[OK]"
+  local -r TEST_STATUS_NOK="[NOK]" 
+  local -r TEST_STATUS_SKIP_MACRO="[SKIP_BY_MACRO]"
+  local -r TEST_STATUS_SKIP_BUG="[SKIP_BY_BUG]"
+  local -r TEST_STATUS_UNKNOWN="[UNKNOWN]"
+  local test_status="$TEST_STATUS_UNKNOWN"
+  
+  # Process feedback.log line by line
+  while IFS= read -r line; do
+    case "$line" in
+      "$TEST_STATUS_OK"*)
+        test_name=$(echo "$line" | sed -n 's/.*\[OK\]:.*\(cubrid-testcases-private-ex\/shell\/.*\.sh\).*/\1/p')
+        test_time=""
+        test_result=""
+        test_status="$TEST_STATUS_OK"
         ;;
-      n)
-        max_print_failed=$OPTARG
+      "$TEST_STATUS_SKIP_BUG"*)
+        test_name=$(echo "$line" | sed -n 's/.*\[SKIP_BY_BUG\].*\(cubrid-testcases-private-ex\/shell\/.*\.sh\).*/\1/p')
+        test_time="0"
+        test_result=""
+        test_status="$TEST_STATUS_SKIP_BUG"
+        cat >> "$xml_file" << EOF
+    <testcase name="$test_name" time="$test_time">
+      <skipped message="$test_status"/>
+    </testcase>
+EOF
+         # Reset variables for next test
+          test_name=""
+          test_time=""
+          test_result=""
+          test_status="$TEST_STATUS_UNKNOWN"
+        ;;
+      "$TEST_STATUS_NOK":*)
+        test_name=$(echo "$line" | sed -n 's/.*\[NOK\]:.*\(cubrid-testcases-private-ex\/shell\/.*\.sh\).*/\1/p')
+        test_time=""
+        test_result=""
+        is_timeout=false
+        test_status="$TEST_STATUS_NOK"
+        ;;
+      *": NOK timeout"*)
+        is_timeout=true
+        test_result+="$line"$'\n'
+        ;;        
+      [0-9][0-9]:[0-9][0-9]:[0-9][0-9]*"time="*)
+          [ -n "$test_name" ] && test_time=$(echo "$line" | sed -n 's/.*time=\([0-9]*\).*/\1/p')
+
+          if [ "$test_status" == "$TEST_STATUS_OK" ]; then
+              cat >> "$xml_file" << EOF
+    <testcase name="$test_name" time="$test_time"/>
+EOF
+         # Reset variables for next test
+          test_name=""
+          test_time=""
+          test_result=""
+          test_status="$TEST_STATUS_UNKNOWN"
+          fi
+          ;;            
+      "[INFO] TEST STOP"*)
+        if [ -n "$test_name" ] && [ -n "$test_time" ]; then
+          local failure_msg="Test failed"
+          [ "$is_timeout" = true ] && failure_msg="Test failed (timeout)"
+          cat >> "$xml_file" << EOF
+    <testcase name="$test_name" time="$test_time">
+      <failure message="$failure_msg">
+        <![CDATA[$test_result]]>
+      </failure>
+    </testcase>
+EOF
+          # Reset variables for next test
+          test_name=""
+          test_time=""
+          test_result=""
+        fi
+        ;;      
+      "[TEST STOP]"*)
+        # Close XML file and exit loop
+        cat >> "$xml_file" << EOF
+  </testsuite>
+</testsuites>
+EOF
+        break
         ;;
       *)
+        # Collect console output only if we're processing a test case
+        [ -n "$test_name" ] && test_result+="$line"$'\n'
         ;;
     esac
-  done
-  shift $(($OPTIND - 1))
+  done < "$feedback_file"
 
-  if [ $# -lt 1 ]; then
-    return 1
-  fi
-  result_path=$1
-  if [ ! -d $result_path ]; then
-    echo "Result path '$result_path' does not exist."
-    return 1
-  fi
-
-  #In case of testing nothing due to an error like failure to load a library.
-  if [ `find $result_path -type f -name summary_info | wc -l` -eq 0 ]; then
-     echo "Nothing is tested because of an error."
-     exit 1 
-  fi
-
-
-  failed_list=$(find $result_path -name summary_info | xargs -n1 grep -hw nok | awk -F: '{print $1}')
-  if [ -z "$failed_list" ]; then
-    nfailed=0
-  else
-    nfailed=$(echo "$failed_list" | wc -l)
-  fi
-  echo ""
-  if [ $max_print_failed -ne 0 -a $nfailed -gt $max_print_failed ]; then
-    echo "** There are too many failed ($nfailed) Testcases on this test."
-    echo "** It will print details of only $max_print_failed failed Testcases."
-  elif [ $nfailed -gt 0 ]; then
-    echo "** There are $nfailed failed Testcases on this test."
-    echo "** It will print details of $nfailed failed Testcases."
-  fi
-  echo ""
-
-  testcases_root_dir="$WORKDIR/cubrid-testcases"
-  testcases_remote_url=$(cd $testcases_root_dir && git config --get remote.origin.url)
-  testcases_hash=$(cd $testcases_root_dir && git rev-parse HEAD)
-  testcases_base_url="${testcases_remote_url%.git}/blob/$testcases_hash"
-
-  for f in $failed_list; do
-    casefile=$f
-    answerfile=${f/\/cases\//\/answers\/}
-    answerfile=${answerfile/%.sql/.answer}
-    resultfile=${f/%.sql/.result}
-    reportfile=${f/%.sql/.report} && echo "<failure message='unexpected result'><![CDATA[" > $reportfile
-
-    diffdir=$(mktemp -d)
-    #egrep -v '^--|^$' $casefile | csplit -n0 -sz -f $diffdir/testcase - '/;/' '{*}'
-    egrep -v $'^--|^\s*$|^autocommit|^\r|^\s*\$' $casefile | awk -v outdir="$diffdir" '{printf "%s;\n", $0 > outdir"/testcase"NR-1}' RS=';[ \t\r]*\n'
-    nq=$(ls $diffdir/testcase* | wc -l)
-    csplit -n0 -sz -f $diffdir/answer $answerfile '/===================================================/' '{*}'
-    na=$(ls $diffdir/answer* | wc -l)
-    csplit -n0 -sz -f $diffdir/result $resultfile '/===================================================/' '{*}'
-    nr=$(ls $diffdir/result* | wc -l)
-
-    ncount=$((ncount+1))
-    printf "%115s\n" "($ncount/$nfailed)" | tr ' ' '-'
-    testcases_case_url="$testcases_base_url/${casefile##*$testcases_root_dir/}"
-    testcases_answer_url="$testcases_base_url/${answerfile##*$testcases_root_dir/}"
-    echo "** Testcase : ${casefile##*$testcases_root_dir/} (has $nq queries) - $testcases_case_url" | tee -a $reportfile
-    echo "** Expected : ${answerfile##*$testcases_root_dir/} - $testcases_answer_url" | tee -a $reportfile
-    #echo "** Actual   : ${resultfile##*$testcases_root_dir/}"
-    [ $nq -eq $na -a $nq -eq $nr ] || { echo "Parse error ($nq != $na != $nr)"; return 1; }
-    for i in $(awk "BEGIN { for (i=0; i<$nq; i++) printf(\"%d \", i) }"); do
-      if $(cmp -s $diffdir/answer$i $diffdir/result$i) ; then
-        continue
-      else
-        echo "** Failed query #$((i+1)) (in $(basename $casefile)):"
-        cat $diffdir/testcase$i
-        echo "** Difference between Expected(-) and Actual(+) results:"
-        diff -u $diffdir/answer$i $diffdir/result$i | tail -n+3
-      fi
-    done | tee -a $reportfile
-    echo "]]></failure>" >> $reportfile
-    rm -rf $diffdir
-
-    if [ $max_print_failed -ne 0 -a $ncount -ge $max_print_failed ]; then
-      break
-    fi
-  done
-
-  if [ $max_print_failed -ne 0 -a $nfailed -gt $max_print_failed ]; then
-    printf "%115s\n" | tr ' ' '-'
-    echo "** More than $max_print_failed failed Testcases are omitted. (There are $nfailed failed Testcases on this test)"
-  fi
-  echo ""
-
-  if [ -n "$xml_output" ]; then
-    summary_xml_list=$(find $result_path -name summary.xml)
-    for f in $summary_xml_list; do
-      target=$(dirname ${f##*schedule_})
-      target=${target%_[0-9]*_*}
-      build_mode=$(cubrid_rel | grep -oe 'release\|debug')
-      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}_${build_mode}" --stringparam casedir "${testcases_root_dir}/" - $f || true
-<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
- <xsl:output indent="yes" cdata-section-elements="failure"/>
- <xsl:template match="results">
-   <testsuites>
-     <testsuite name="{$target}" tests="{count(scenario)}" failures="{count(scenario/result[contains(.,'fail')])}">
-       <xsl:apply-templates select="scenario"/>
-     </testsuite>
-   </testsuites>
- </xsl:template>
- <xsl:template match="scenario">
-   <testcase classname="{$target}" name="{case}" time="{elapsetime div 1000}">
-   <xsl:variable name="testcase" select="case"/>
-   <xsl:variable name="report" select="concat($casedir, substring-before($testcase, '.sql'), '.report')"/>
-      <xsl:if test="result='fail'">
-        <xsl:copy-of select="document($report)"/>
-      </xsl:if>
-   </testcase>
- </xsl:template>
-</xsl:stylesheet>
-_EOL
-    done
-  fi
-
-  if [ $nfailed -gt 0 ]; then
-    echo "** There are $nfailed failed Testcases on this test."
-    echo "** All failed Testcases are listed below:"
-    for f in $failed_list ; do
-      echo " - ${f##*$testcases_root_dir/}"
-    done
-    echo "** $nfailed cases are failed."
-    exit $nfailed
+  debug "JUnit XML generated: $(ls -la $(readlink -f $xml_output))" "$LINENO"
+  # Check if there are any failed test cases
+  if [ $total_fail_case_count -gt 0 ]; then
+    echo "** There are $total_fail_case_count failed Testcases on this test."
+    echo "** $total_fail_case_count cases are failed."
+    return $total_fail_case_count
   else
     echo "** All Tests are passed"
+    return 0
   fi
 }
 
-function get_jenkins ()
-{
-  if [ -z "$JENKINS_URL" ]; then
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -url)
-          JENKINS_URL="$2"; break ;;
-      esac
-      shift
-    done
-  fi
-  if [ -z "$JENKINS_URL" ]; then
-    echo "Cannot find jenkins url from arguments"
-    return 1
-  fi
-  curl --create-dirs -sSLo jenkins/slave.jar $JENKINS_URL/jnlpJars/slave.jar
+run_manual_test_result() {
+  debug "run_manual_test_result()" "$LINENO"
+  local xml_output=$1
+  local baseline=$2
+  
+  java -cp $CUBRID/jdbc/cubrid_jdbc.jar:/manual_test_result.jar manual_test_result $baseline $xml_output/test-${TEST_SUITE}.xml
+  mv -f $baseline*.csv $xml_output
+
+  debug "csv file generated: $(ls -la $(readlink -f $xml_output))" "$LINENO"
 }
 
-function run_default ()
-{
-  run_build && run_test
+# Main execution function
+main() {
+  debug "main" "$LINENO"
+  case "$1" in
+    checkout)
+      set -- run_checkout
+      ;;
+    test)
+      set -- run_test
+      ;;
+    *)
+      echo "Unknown role: $1. Use 'checkout' or 'test'."
+      exit 1
+      ;;
+  esac
+
+  if [ -n "$(type -t $1)" -a "$(type -t $1)" = function ]; then
+    eval "$@"
+  else
+    exec "$@"
+  fi
 }
 
-case "$1" in
-  "")
-    set -- run_default
-    ;;
-  checkout)
-    set -- run_checkout
-    ;;
-  build)
-    shift
-    set -- run_build "$@"
-    ;;
-  dist)
-    shift
-    set -- run_dist "$@"
-    ;;
-  test)
-    set -- run_test
-    ;;
-  jenkins-slave)
-    shift
-    get_jenkins "$@"
-    set -- java $JAVA_OPTS -cp jenkins/slave.jar hudson.remoting.jnlp.Main -headless "$@"
-    ;;
-esac
-
-if [ -n "$(type -t $1)" -a "$(type -t $1)" = function ]; then
-  eval "$@"
-else
-  exec "$@"
-fi
+main "$@"
