@@ -51,9 +51,6 @@ RUN ssh-keygen -A && \
     ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime && \
     echo "Asia/Seoul" > /etc/timezone
 
-COPY docker-entrypoint.sh /entrypoint.sh
-COPY manual_test_result.jar /manual_test_result.jar
-
 #circleci env
 ENV TEST_REPORT=/tmp/tests
 ENV WORKDIR=/home
@@ -72,6 +69,9 @@ ENV LD_LIBRARY_PATH=$CUBRID/lib:$CUBRID/cci/lib:$LD_LIBRARY_PATH
 ENV SHLIB_PATH=$LD_LIBRARY_PATH
 ENV LIBPATH=$LD_LIBRARY_PATH
 ENV PATH=$CUBRID/bin:/usr/sbin:$PATH
+
+COPY docker-entrypoint.sh /entrypoint.sh
+COPY manual_test_result.jar /manual_test_result.jar
 
 RUN chmod 777 $WORKDIR && \
     chmod 777 /entrypoint.sh && \

@@ -213,8 +213,18 @@ run_manual_test_result() {
   local xml_output=$1
   local baseline=$2
   
-  java -cp $CUBRID/jdbc/cubrid_jdbc.jar:/manual_test_result.jar manual_test_result $baseline $xml_output/test-${TEST_SUITE}.xml
-  mv -f $baseline*.csv $xml_output
+  if [ -n "$baseline" ]; then
+    # If baseline is provided, pass it to manual_test_result
+    debug "Using provided baseline: $baseline" "$LINENO"
+    java -cp $CUBRID/jdbc/cubrid_jdbc.jar:/manual_test_result.jar manual_test_result $baseline $xml_output/test-${TEST_SUITE}.xml
+    mv -f $baseline*.csv $xml_output
+  else
+    # If baseline is not provided, let manual_test_result find the latest version
+    debug "No baseline provided, using latest from DB" "$LINENO"
+    java -cp $CUBRID/jdbc/cubrid_jdbc.jar:/manual_test_result.jar manual_test_result $xml_output/test-${TEST_SUITE}.xml
+    # Move all CSV files that were generated
+    mv -f *.csv $xml_output 2>/dev/null || true
+  fi
 
   debug "csv file generated: $(ls -la $(readlink -f $xml_output))" "$LINENO"
 }

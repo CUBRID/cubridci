@@ -7,22 +7,34 @@ import org.w3c.dom.*;          // For DOM parsing
 public class manual_test_result {
     
     public static void main(String[] args) {
-        // Usage: java manual_test_result <base_version> <xml_file_path>
-        if (args.length < 2) {
-            System.out.println("Usage: java manual_test_result <base_version> <xml_file_path>");
+        // Usage: java manual_test_result [base_version] <xml_file_path>
+        if (args.length < 1) {
+            System.out.println("Usage: java manual_test_result [base_version] <xml_file_path>");
             System.exit(0);
         }
-        
-        String baseVersion = args[0];
-        String xmlFilePath = args[1];
-        String cur_dir = System.getProperty("user.dir");
-        String newFilename = cur_dir + "/" + baseVersion + "__" + "civersion" + "_new.csv";
-        String dupFilename = cur_dir + "/" + baseVersion + "__" + "civersion" + "_dup.csv";
         
         // DB connection information (modify as needed)
         String url = "jdbc:cubrid:127.0.0.1:30000:qaresu:::";
         String user = "manual_user";
         String password = "manual_user_123";
+        
+        String baseVersion;
+        String xmlFilePath;
+        
+        if (args.length == 1) {
+            // Only XML file path is provided, get the latest base version from DB
+            xmlFilePath = args[0];
+            baseVersion = getLatestBaseVersion(url, user, password);
+            System.out.println("No base version provided. Using latest version from DB: " + baseVersion);
+        } else {
+            // Both base version and XML file path are provided
+            baseVersion = args[0];
+            xmlFilePath = args[1];
+        }
+        
+        String cur_dir = System.getProperty("user.dir");
+        String newFilename = cur_dir + "/" + baseVersion + "__" + "civersion" + "_new.csv";
+        String dupFilename = cur_dir + "/" + baseVersion + "__" + "civersion" + "_dup.csv";
         
         // Retrieve baseline test cases from DB using the given base version.
         Set<String> baselineTestCases = getBaselineTestCases(baseVersion, url, user, password);
@@ -38,13 +50,76 @@ public class manual_test_result {
         writeTestCasesToCSV(newFilename, newTestCases);
         System.out.println("CSV file created: " + newFilename);
         
-        // Calculate intersection (duplicate test cases) between baseline and XML test cases.
-        Set<String> dupTestCases = new HashSet<>(baselineTestCases);
-        dupTestCases.retainAll(xmlTestCases);
+        // Extract duplicate cases: Cases present in both XML and baseline.
+        Set<String> dupTestCases = new HashSet<>(xmlTestCases);
+        dupTestCases.retainAll(baselineTestCases);
         
         // Write duplicate test cases to CSV.
         writeTestCasesToCSV(dupFilename, dupTestCases);
         System.out.println("CSV file created: " + dupFilename);
+    }
+    
+    /**
+     * Get the latest base version from the database.
+     * 
+     * @param url      The database URL
+     * @param user     The database user
+     * @param password The database password
+     * @return The latest base version
+     */
+    public static String getLatestBaseVersion(String url, String user, String password) {
+        String latestVersion = "unknown";
+        try {
+            // Load the CUBRID JDBC driver
+            Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
+        } catch (ClassNotFoundException e) {
+            System.err.println("Unable to load driver.");
+            e.printStackTrace();
+            return latestVersion;
+        }
+        
+        try (Connection conn = DriverManager.getConnection(url, user, password)) {
+            String sql = "select build_id " +
+                    "from ( " +
+                    "    SELECT 1 seq, test_build build_id " +
+                    "    FROM shell_main " +
+                    "    WHERE main_id = ( SELECT MAX(A.main_id) " +
+                    "                      FROM shell_main  A, cubrid_build B " +
+                    "                      WHERE A.os = 'linux' AND A.version= '64bits' AND A.category='shell' " +
+                    "                        AND A.test_rate=100 " +
+                    "                        AND A.test_build = B.build_id " +
+                    "                        AND B.build_type = 'general' " +
+                    "                    ) " +
+                    "      AND test_build = ( SELECT MAX(A.test_build) " +
+                    "                         FROM shell_main  A, cubrid_build B " +
+                    "                         WHERE A.os = 'linux' AND A.version= '64bits' AND A.category='shell' " +
+                    "                           AND A.test_rate=100 AND A.start_time > ( SYS_DATE - 60 ) " +
+                    "                           AND A.test_build = B.build_id " +
+                    "                           AND B.build_type = 'general' " +
+                    "                       ) " +
+                    "    UNION ALL " +
+                    "    SELECT 2 seq, MAX(A.test_build)  build_id " +
+                    "    FROM shell_main  A, cubrid_build B " +
+                    "    WHERE A.os = 'linux' AND A.version= '64bits' AND A.category='shell' " +
+                    "      AND A.test_rate=100 AND A.start_time > ( SYS_DATE - 60 ) " +
+                    "      AND A.test_build = B.build_id " +
+                    "      AND B.build_type = 'general' " +
+                    "    ORDER BY 1 " +
+                    "    LIMIT 1 " +
+                    ")";
+            
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(sql)) {
+                if (rs.next()) {
+                    latestVersion = rs.getString(1).trim();
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error getting latest base version:");
+            e.printStackTrace();
+        }
+        
+        return latestVersion;
     }
     
     /**
@@ -111,18 +186,26 @@ public class manual_test_result {
                 Node node = nList.item(i);
                 if (node.getNodeType() == Node.ELEMENT_NODE) {
                     Element element = (Element) node;
-                    String testCaseName = element.getAttribute("name").trim();
-                    // Remove prefix if exists to match DB format.
-                    String prefix = "cubrid-testcases-private-ex/";
-                    if (testCaseName.startsWith(prefix)) {
-                        testCaseName = testCaseName.substring(prefix.length());
+                    
+                    // Check if this testcase has a failure element
+                    NodeList failureList = element.getElementsByTagName("failure");
+                    if (failureList.getLength() > 0) {
+                        // This is a failed test case, include it
+                        String testCaseName = element.getAttribute("name").trim();
+                        // Remove prefix if exists to match DB format.
+                        String prefix = "cubrid-testcases-private-ex/";
+                        if (testCaseName.startsWith(prefix)) {
+                            testCaseName = testCaseName.substring(prefix.length());
+                        }
+                        testCases.add(testCaseName);
+                        System.out.println("Failed testCase: " + testCaseName);
                     }
-                    testCases.add(testCaseName);
                 }
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
+        System.out.println("Failed testCases count: " + testCases.size());
         return testCases;
     }
     
