@@ -118,13 +118,13 @@ EOF
   while IFS= read -r line; do
     case "$line" in
       "$TEST_STATUS_OK"*)
-        test_name=$(echo "$line" | sed -n 's/.*\[OK\]:.*\(cubrid-testcases-private-ex\/shell\/.*\.sh\).*/\1/p')
+        test_name=$(echo "$line" | sed -n 's/.*\[OK\]:.*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
         test_time=""
         test_result=""
         test_status="$TEST_STATUS_OK"
         ;;
       "$TEST_STATUS_SKIP_BUG"*)
-        test_name=$(echo "$line" | sed -n 's/.*\[SKIP_BY_BUG\].*\(cubrid-testcases-private-ex\/shell\/.*\.sh\).*/\1/p')
+        test_name=$(echo "$line" | sed -n 's/.*\[SKIP_BY_BUG\].*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
         test_time="0"
         test_result=""
         test_status="$TEST_STATUS_SKIP_BUG"
@@ -140,7 +140,7 @@ EOF
           test_status="$TEST_STATUS_UNKNOWN"
         ;;
       "$TEST_STATUS_NOK":*)
-        test_name=$(echo "$line" | sed -n 's/.*\[NOK\]:.*\(cubrid-testcases-private-ex\/shell\/.*\.sh\).*/\1/p')
+        test_name=$(echo "$line" | sed -n 's/.*\[NOK\]:.*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
         test_time=""
         test_result=""
         is_timeout=false
