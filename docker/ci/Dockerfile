@@ -39,14 +39,6 @@ RUN dnf install -y epel-release && \
 RUN ssh-keygen -A && \
     sed -i 's/^account.*pam_nologin.so/#&/' /etc/pam.d/sshd && \
     mkdir -p /var/run/sshd && \
-    # useradd -ms /bin/bash shell_ctrl && \
-    # useradd -ms /bin/bash shell && \
-    # echo 'shell_ctrl:shell_ctrl' | chpasswd && \
-    # echo 'shell:shell' | chpasswd && \
-    # echo 'shell_ctrl ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
-    # echo 'shell ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
-    # mkdir -p /home/shell/do_not_delete_core /home/shell/ERROR_BACKUP && \
-    # chown -R shell:shell /home/shell/do_not_delete_core /home/shell/ERROR_BACKUP && \
     mkdir -p /home/do_not_delete_core /home/ERROR_BACKUP && \
     ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime && \
     echo "Asia/Seoul" > /etc/timezone

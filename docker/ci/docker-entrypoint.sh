@@ -44,7 +44,7 @@ run_checkout() {
   configure
   
   clone_repository "cubrid-testtools" "$CTP_BRANCH_NAME"  
-  clone_repository "cubrid-testcases" "develop"
+  # clone_repository "cubrid-testcases" "develop"
   clone_repository "cubrid-testcases-private-ex" "develop"
   
 }
