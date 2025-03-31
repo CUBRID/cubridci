@@ -103,6 +103,7 @@ EOF
 
   # Test case tracking variables
   local test_name=""
+  local test_file=""
   local test_time=""
   local test_result=""
   local is_timeout=false
@@ -119,28 +120,32 @@ EOF
     case "$line" in
       "$TEST_STATUS_OK"*)
         test_name=$(echo "$line" | sed -n 's/.*\[OK\]:.*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
+        test_file=$test_name
         test_time=""
         test_result=""
         test_status="$TEST_STATUS_OK"
         ;;
       "$TEST_STATUS_SKIP_BUG"*)
         test_name=$(echo "$line" | sed -n 's/.*\[SKIP_BY_BUG\].*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
+        test_file=$test_name
         test_time="0"
         test_result=""
         test_status="$TEST_STATUS_SKIP_BUG"
         cat >> "$xml_file" << EOF
-    <testcase name="$test_name" time="$test_time">
+    <testcase name="$test_name" file="$test_file" time="$test_time">
       <skipped message="$test_status"/>
     </testcase>
 EOF
          # Reset variables for next test
           test_name=""
+          test_file=""
           test_time=""
           test_result=""
           test_status="$TEST_STATUS_UNKNOWN"
         ;;
       "$TEST_STATUS_NOK":*)
         test_name=$(echo "$line" | sed -n 's/.*\[NOK\]:.*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
+        test_file=$test_name
         test_time=""
         test_result=""
         is_timeout=false
@@ -155,10 +160,11 @@ EOF
 
           if [ "$test_status" == "$TEST_STATUS_OK" ]; then
               cat >> "$xml_file" << EOF
-    <testcase name="$test_name" time="$test_time"/>
+    <testcase name="$test_name" file="$test_file" time="$test_time"/>
 EOF
          # Reset variables for next test
           test_name=""
+          test_file=""
           test_time=""
           test_result=""
           test_status="$TEST_STATUS_UNKNOWN"
@@ -169,7 +175,7 @@ EOF
           local failure_msg="Test failed"
           [ "$is_timeout" = true ] && failure_msg="Test failed (timeout)"
           cat >> "$xml_file" << EOF
-    <testcase name="$test_name" time="$test_time">
+    <testcase name="$test_name" file="$test_file" time="$test_time">
       <failure message="$failure_msg">
         <![CDATA[$test_result]]>
       </failure>
