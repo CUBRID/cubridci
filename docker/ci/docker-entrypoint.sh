@@ -22,8 +22,7 @@ configure() {
 clone_repository() {
   local repo=$1
   local branch=$2
-  #local url="https://${GITHUB_TOKEN}@github.com/CUBRID/$repo.git"
-  local url="https://${GITHUB_TOKEN}@github.com/tw-kang/$repo.git"
+  local url="https://${GITHUB_TOKEN}@github.com/CUBRID/$repo.git"
   
   debug "clone_repository $repo $branch $url" "$LINENO"
   if [ ! -d "$WORKDIR/$repo" ]; then
