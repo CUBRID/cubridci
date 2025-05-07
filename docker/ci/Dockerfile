@@ -15,7 +15,7 @@ RUN dnf install -y epel-release && \
     file \
     diffutils \
     which \
-    tcsh \
+    csh \
     # Network tools
     net-tools \
     telnet \
