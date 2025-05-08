@@ -27,6 +27,7 @@ RUN dnf install -y epel-release && \
     # Java runtime
     java-1.8.0-openjdk-devel \
     # Test utilities
+    libxslt \
     dos2unix \
     lcov \
     bc \
