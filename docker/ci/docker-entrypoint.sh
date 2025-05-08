@@ -204,7 +204,7 @@ EOF
    </testsuites>
  </xsl:template>
  <xsl:template match="scenario">
-   <testcase name="{case}" time="{elapsetime div 1000}">
+   <testcase name="{case}" time="{elapsetime}">
      <xsl:if test="result='fail'">
        <failure message="{failure_message}">
          <xsl:value-of select="error_content"/>
