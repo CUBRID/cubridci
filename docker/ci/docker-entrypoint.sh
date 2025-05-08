@@ -73,7 +73,8 @@ run_test() {
 report_test() {
   debug "report_test()" "$LINENO"
   local xml_output=$1
-  local xml_file=$xml_output/test-${TEST_SUITE}.xml
+  local summary_xml=$xml_output/summary.xml
+  local junit_xml=$xml_output/test-${TEST_SUITE}.xml
   local feedback_file=$2
 
   # Validate input
@@ -82,28 +83,14 @@ report_test() {
     return 1
   fi
 
-  # Get test summary from feedback.log
-  local test_category=$(tail -n 10 "$feedback_file" | grep "Test Category:" | awk -F':' '{print $2}')
-  local total_case_count=$(tail -n 10 "$feedback_file" | grep "Total Case:" | awk -F':' '{print $2}')
-  local total_execution_count=$(tail -n 10 "$feedback_file" | grep "Total Execution Case:" | awk -F':' '{print $2}')
-  local total_success_case_count=$(tail -n 10 "$feedback_file" | grep "Total Success Case:" | awk -F':' '{print $2}')
-  local total_fail_case_count=$(tail -n 10 "$feedback_file" | grep "Total Fail Case:" | awk -F':' '{print $2}')
-  local total_skip_case_count=$(tail -n 10 "$feedback_file" | grep "Total Skip Case:" | awk -F':' '{print $2}')
-  local elapse_time=$(tail -n 10 "$feedback_file" | grep "Elapse Time:" | awk -F':' '{print $2}')
-
-  # Prepare output directory and file
+  # Initialize summary XML file with header
   mkdir -p "$xml_output"
-  
-  # Initialize XML file with header
-  cat > "$xml_file" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuites>
-  <testsuite name="$test_category" tests="$total_case_count" failures="$total_fail_case_count" skipped="$total_skip_case_count" time="$elapse_time">
+  cat > "$summary_xml" << EOF
+<results>
 EOF
 
   # Test case tracking variables
   local test_name=""
-  local test_file=""
   local test_time=""
   local test_result=""
   local is_timeout=false
@@ -120,32 +107,31 @@ EOF
     case "$line" in
       "$TEST_STATUS_OK"*)
         test_name=$(echo "$line" | sed -n 's/.*\[OK\]:.*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
-        test_file=$test_name
         test_time=""
         test_result=""
         test_status="$TEST_STATUS_OK"
         ;;
       "$TEST_STATUS_SKIP_BUG"*)
         test_name=$(echo "$line" | sed -n 's/.*\[SKIP_BY_BUG\].*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
-        test_file=$test_name
         test_time="0"
         test_result=""
         test_status="$TEST_STATUS_SKIP_BUG"
-        cat >> "$xml_file" << EOF
-    <testcase name="$test_name" file="$test_file" time="$test_time">
-      <skipped message="$test_status"/>
-    </testcase>
+        cat >> "$summary_xml" << EOF
+  <scenario>
+     <case>$test_name</case>
+     <elapsetime>$test_time</elapsetime>
+     <result>skip</result>
+     <skip_reason>$test_status</skip_reason>
+  </scenario>
 EOF
          # Reset variables for next test
           test_name=""
-          test_file=""
           test_time=""
           test_result=""
           test_status="$TEST_STATUS_UNKNOWN"
         ;;
       "$TEST_STATUS_NOK":*)
         test_name=$(echo "$line" | sed -n 's/.*\[NOK\]:.*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
-        test_file=$test_name
         test_time=""
         test_result=""
         is_timeout=false
@@ -159,12 +145,15 @@ EOF
           [ -n "$test_name" ] && test_time=$(echo "$line" | sed -n 's/.*time=\([0-9]*\).*/\1/p')
 
           if [ "$test_status" == "$TEST_STATUS_OK" ]; then
-              cat >> "$xml_file" << EOF
-    <testcase name="$test_name" file="$test_file" time="$test_time"/>
+              cat >> "$summary_xml" << EOF
+  <scenario>
+     <case>$test_name</case>
+     <elapsetime>$test_time</elapsetime>
+     <result>success</result>
+  </scenario>
 EOF
          # Reset variables for next test
           test_name=""
-          test_file=""
           test_time=""
           test_result=""
           test_status="$TEST_STATUS_UNKNOWN"
@@ -174,12 +163,14 @@ EOF
         if [ -n "$test_name" ] && [ -n "$test_time" ]; then
           local failure_msg="Test failed"
           [ "$is_timeout" = true ] && failure_msg="Test failed (timeout)"
-          cat >> "$xml_file" << EOF
-    <testcase name="$test_name" file="$test_file" time="$test_time">
-      <failure message="$failure_msg">
-        <![CDATA[$test_result]]>
-      </failure>
-    </testcase>
+          cat >> "$summary_xml" << EOF
+  <scenario>
+     <case>$test_name</case>
+     <elapsetime>$test_time</elapsetime>
+     <result>fail</result>
+     <failure_message>$failure_msg</failure_message>
+     <error_content><![CDATA[$test_result]]></error_content>
+  </scenario>
 EOF
           # Reset variables for next test
           test_name=""
@@ -189,9 +180,8 @@ EOF
         ;;      
       "[TEST STOP]"*)
         # Close XML file and exit loop
-        cat >> "$xml_file" << EOF
-  </testsuite>
-</testsuites>
+        cat >> "$summary_xml" << EOF
+</results>
 EOF
         break
         ;;
@@ -202,8 +192,37 @@ EOF
     esac
   done < "$feedback_file"
 
-  debug "JUnit XML generated: $(ls -la $(readlink -f $xml_output))" "$LINENO"
+  # Convert summary.xml to JUnit format using xsltproc
+  cat << "_EOL" | xsltproc -o "$junit_xml" --stringparam target "${TEST_SUITE}" - $summary_xml || true
+<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
+ <xsl:output indent="yes" cdata-section-elements="failure"/>
+ <xsl:template match="results">
+   <testsuites>
+     <testsuite name="{$target}" tests="{count(scenario)}" failures="{count(scenario/result[text()='fail'])}">
+       <xsl:apply-templates select="scenario"/>
+     </testsuite>
+   </testsuites>
+ </xsl:template>
+ <xsl:template match="scenario">
+   <testcase name="{case}" time="{elapsetime div 1000}">
+     <xsl:if test="result='fail'">
+       <failure message="{failure_message}">
+         <xsl:value-of select="error_content"/>
+       </failure>
+     </xsl:if>
+     <xsl:if test="result='skip'">
+       <skipped message="{skip_reason}"/>
+     </xsl:if>
+   </testcase>
+ </xsl:template>
+</xsl:stylesheet>
+_EOL
+
+  rm -rf $summary_xml
+  debug "JUnit XML generated: $(ls -la $(readlink -f $junit_xml))" "$LINENO"
+  
   # Check if there are any failed test cases
+  local total_fail_case_count=$(tail -n 10 "$feedback_file" | grep "Total Fail Case:" | awk -F':' '{print $2}')
   if [ $total_fail_case_count -gt 0 ]; then
     echo "** There are $total_fail_case_count failed Testcases on this test."
     echo "** $total_fail_case_count cases are failed."
