@@ -31,6 +31,7 @@ RUN dnf install -y epel-release && \
     dos2unix \
     lcov \
     bc \
+    jq \
     expect && \
     dnf clean all && \
     rm -rf /var/cache/dnf/* && \
