@@ -88,109 +88,72 @@ report_test() {
   cat > "$summary_xml" << EOF
 <results>
 EOF
-
-  # Test case tracking variables
-  local test_name=""
-  local test_time=""
-  local test_result=""
-  local is_timeout=false
-  # Define test status constants
-  local -r TEST_STATUS_OK="[OK]"
-  local -r TEST_STATUS_NOK="[NOK]" 
-  local -r TEST_STATUS_SKIP_MACRO="[SKIP_BY_MACRO]"
-  local -r TEST_STATUS_SKIP_BUG="[SKIP_BY_BUG]"
-  local -r TEST_STATUS_UNKNOWN="[UNKNOWN]"
-  local test_status="$TEST_STATUS_UNKNOWN"
+awk '
+  # SKIP_BY_MACRO pattern
+  /\[SKIP_BY_MACRO\].*cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/ {
+    match($0, /cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/);
+    test = substr($0, RSTART, RLENGTH);
+    sub("cubrid-testcases-private-ex/", "", test);
+    print "  <scenario>\n     <case>" test "</case>\n     <elapsetime>0</elapsetime>\n     <result>skip</result>\n  </scenario>";
+    next;
+  }
   
-  # Process feedback.log line by line
-  while IFS= read -r line; do
-    case "$line" in
-      "$TEST_STATUS_OK"*)
-        test_name=$(echo "$line" | sed -n 's/.*\[OK\]:.*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
-        test_time=""
-        test_result=""
-        test_status="$TEST_STATUS_OK"
-        ;;
-      "$TEST_STATUS_SKIP_BUG"*)
-        test_name=$(echo "$line" | sed -n 's/.*\[SKIP_BY_BUG\].*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
-        test_time="0"
-        test_result=""
-        test_status="$TEST_STATUS_SKIP_BUG"
-        cat >> "$summary_xml" << EOF
-  <scenario>
-     <case>$test_name</case>
-     <elapsetime>$test_time</elapsetime>
-     <result>skip</result>
-     <skip_reason>$test_status</skip_reason>
-  </scenario>
-EOF
-         # Reset variables for next test
-          test_name=""
-          test_time=""
-          test_result=""
-          test_status="$TEST_STATUS_UNKNOWN"
-        ;;
-      "$TEST_STATUS_NOK":*)
-        test_name=$(echo "$line" | sed -n 's/.*\[NOK\]:.*cubrid-testcases-private-ex\/\(shell\/.*\.sh\).*/\1/p')
-        test_time=""
-        test_result=""
-        is_timeout=false
-        test_status="$TEST_STATUS_NOK"
-        ;;
-      *": NOK timeout"*)
-        is_timeout=true
-        test_result+="$line"$'\n'
-        ;;        
-      [0-9][0-9]:[0-9][0-9]:[0-9][0-9]*"time="*)
-          [ -n "$test_name" ] && test_time=$(echo "$line" | sed -n 's/.*time=\([0-9]*\).*/\1/p')
-
-          if [ "$test_status" == "$TEST_STATUS_OK" ]; then
-              cat >> "$summary_xml" << EOF
-  <scenario>
-     <case>$test_name</case>
-     <elapsetime>$test_time</elapsetime>
-     <result>success</result>
-  </scenario>
-EOF
-         # Reset variables for next test
-          test_name=""
-          test_time=""
-          test_result=""
-          test_status="$TEST_STATUS_UNKNOWN"
-          fi
-          ;;            
-      "[INFO] TEST STOP"*)
-        if [ -n "$test_name" ] && [ -n "$test_time" ]; then
-          local failure_msg="Test failed"
-          [ "$is_timeout" = true ] && failure_msg="Test failed (timeout)"
-          cat >> "$summary_xml" << EOF
-  <scenario>
-     <case>$test_name</case>
-     <elapsetime>$test_time</elapsetime>
-     <result>fail</result>
-     <failure_message>$failure_msg</failure_message>
-     <error_content><![CDATA[$test_result]]></error_content>
-  </scenario>
-EOF
-          # Reset variables for next test
-          test_name=""
-          test_time=""
-          test_result=""
-        fi
-        ;;      
-      "[TEST STOP]"*)
-        # Close XML file and exit loop
-        cat >> "$summary_xml" << EOF
+  # SKIP_BY_BUG pattern
+  /\[SKIP_BY_BUG\].*cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/ {
+    match($0, /cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/);
+    test = substr($0, RSTART, RLENGTH);
+    sub("cubrid-testcases-private-ex/", "", test);
+    print "  <scenario>\n     <case>" test "</case>\n     <elapsetime>0</elapsetime>\n     <result>skip</result>\n  </scenario>";
+    next;
+  }
+  
+  # OK case start - store test name only
+  /^\[OK\]:.*cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/ {
+    match($0, /cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/);
+    ok_test = substr($0, RSTART, RLENGTH);
+    sub("cubrid-testcases-private-ex/", "", ok_test);
+    ok_pending = 1;
+    next;
+  }
+  
+  # OK case completion - extract time
+  ok_pending == 1 && /time=[0-9]+/ {
+    match($0, /time=[0-9]+/);
+    time = substr($0, RSTART+5, RLENGTH-5);
+    print "  <scenario>\n     <case>" ok_test "</case>\n     <elapsetime>" time "</elapsetime>\n     <result>success</result>\n  </scenario>";
+    ok_pending = 0;
+    next;
+  }
+  
+  # NOK case start - store test name and begin error collection
+  /^\[NOK\]:.*cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/ {
+    match($0, /cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/);
+    nok_test = substr($0, RSTART, RLENGTH);
+    sub("cubrid-testcases-private-ex/", "", nok_test);
+    nok_pending = 1;
+    error_text = $0 "\n";
+    next;
+  }
+  
+  # NOK intermediate content collection
+  nok_pending == 1 && !/time=[0-9]+/ {
+    error_text = error_text $0 "\n";
+    next;
+  }
+  
+  # NOK case completion - extract time and output XML
+  nok_pending == 1 && /time=[0-9]+/ {
+    match($0, /time=[0-9]+/);
+    time = substr($0, RSTART+5, RLENGTH-5);
+    error_text = error_text $0 "\n";
+    print "  <scenario>\n     <case>" nok_test "</case>\n     <elapsetime>" time "</elapsetime>\n     <result>fail</result>\n     <failure_message>Test failed</failure_message>\n     <error_content><![CDATA[" error_text "]]></error_content>\n  </scenario>";
+    nok_pending = 0;
+    next;
+  }
+' "$feedback_file" >> "$summary_xml"
+  cat >> "$summary_xml" << EOF
 </results>
 EOF
-        break
-        ;;
-      *)
-        # Collect console output only if we're processing a test case
-        [ -n "$test_name" ] && test_result+="$line"$'\n'
-        ;;
-    esac
-  done < "$feedback_file"
 
   # Convert summary.xml to JUnit format using xsltproc
   cat << "_EOL" | xsltproc -o "$junit_xml" --stringparam target "${TEST_SUITE}" - $summary_xml || true
@@ -211,7 +174,7 @@ EOF
        </failure>
      </xsl:if>
      <xsl:if test="result='skip'">
-       <skipped message="{skip_reason}"/>
+       <skipped/>
      </xsl:if>
    </testcase>
  </xsl:template>
