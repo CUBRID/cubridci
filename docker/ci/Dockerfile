@@ -48,11 +48,13 @@ RUN ssh-keygen -A && \
 
 #circleci env
 ENV TEST_REPORT=/tmp/tests
+ENV BRANCH_TESTTOOLS develop
+ENV BRANCH_TESTCASES develop
 ENV WORKDIR=/home
 ENV USER=root
 # testtools env
 ENV JAVA_HOME=/usr/lib/jvm/java-1.8.0
-ENV CTP_BRANCH_NAME=develop 
+ENV CTP_BRANCH_NAME=$BRANCH_TESTTOOLS
 ENV CTP_SKIP_UPDATE=0 
 ENV CTP_HOME=$WORKDIR/cubrid-testtools/CTP
 ENV init_path=$CTP_HOME/shell/init_path
