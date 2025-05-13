@@ -21,7 +21,6 @@ pipeline {
 					}
 					
 					sh "docker rmi cubridci/cubridci:${env.BRANCH_NAME}"
-					sh "echo 11"
 				}
 			}
 		}
