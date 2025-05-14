@@ -53,7 +53,7 @@ run_test() {
   debug "run_test()" "$LINENO"
   local feedback_file="$CTP_HOME/result/shell/current_runtime_logs/feedback.log"
   
-  ( cd $CTP_HOME && HOME=$WORKDIR ./bin/ctp.sh shell )
+  ( cd $CTP_HOME && HOME=$WORKDIR ./bin/ctp.sh shell -c $CTP_HOME/conf/shell_ci.conf )
   
   set +e
   report_test $TEST_REPORT $feedback_file
@@ -199,16 +199,15 @@ run_manual_test_result() {
   local xml_output=$1
   local baseline=$2
   
-  if [ -n "$baseline" ]; then
+  if [ "$baseline" != "none" ]; then
     # If baseline is provided, pass it to manual_test_result
     debug "Using provided baseline: $baseline" "$LINENO"
     java -cp $CUBRID/jdbc/cubrid_jdbc.jar:/manual_test_result.jar manual_test_result $baseline $xml_output/test-${TEST_SUITE}.xml
-    mv -f $baseline*new.csv $xml_output
+    mv -f $baseline*new.csv $xml_output 2>/dev/null || true
   else
     # If baseline is not provided, let manual_test_result find the latest version
     debug "No baseline provided, using latest from DB" "$LINENO"
     java -cp $CUBRID/jdbc/cubrid_jdbc.jar:/manual_test_result.jar manual_test_result $xml_output/test-${TEST_SUITE}.xml
-    # Move all CSV files that were generated
     mv -f *new.csv $xml_output 2>/dev/null || true
   fi
 

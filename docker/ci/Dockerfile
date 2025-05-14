@@ -48,6 +48,7 @@ RUN ssh-keygen -A && \
 
 #circleci env
 ENV TEST_REPORT=/tmp/tests
+ENV BASELINE none
 ENV BRANCH_TESTTOOLS develop
 ENV BRANCH_TESTCASES develop
 ENV WORKDIR=/home
