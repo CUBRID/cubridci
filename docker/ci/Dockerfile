@@ -47,6 +47,11 @@ RUN set -x && \
         devtoolset-8-gcc-gfortran \
     && yum clean all -y
 
+RUN set -x && \
+    yum install -y --setopt=tsflags=nodocs \
+        ccache \
+    && yum clean all -y
+
 # install bison 3 for PR #1125
 ENV BISON_VERSION 3.0.5
 RUN curl -L https://ftp.gnu.org/gnu/bison/bison-$BISON_VERSION.tar.gz | tar xzvf - \
