@@ -64,9 +64,8 @@ RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
 RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
 RUN localedef -f EUC-KR -i ko_KR ko_KR.euckr
 
-# ccache configuration
-ENV CMAKE_C_COMPILER_LAUNCHER=ccache
-ENV CMAKE_CXX_COMPILER_LAUNCHER=ccache
+ENV CC="ccache gcc"
+ENV CXX="ccache g++"
 
 COPY docker-entrypoint.sh /entrypoint.sh
 
