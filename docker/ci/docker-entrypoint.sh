@@ -58,7 +58,11 @@ function run_dist ()
 
 function run_test ()
 {
-  run_checkout
+  if [ -z "$CIRCLECI" ]; then
+    run_checkout
+  else
+    echo "[info] Skipping run_checkout in run_test on CircleCI"
+  fi
 
   #CUBRIDQA-1093. disable reuse_oid 
   cd $WORKDIR/cubrid-testtools
