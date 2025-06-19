@@ -1,4 +1,4 @@
-FROM centos:7
+FROM centos:6
 
 LABEL Description="This is a build and test environment image for CUBRID"
 
@@ -20,7 +20,8 @@ RUN set -x \
                 ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
                 make git which ccache \
-        && yum clean all -y
+        && yum clean all -y \
+        && rm -rf /var/cache/yum
 
 # install bison 3 for PR #1125
 ENV BISON_VERSION 3.0.5
