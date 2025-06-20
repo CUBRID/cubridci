@@ -19,7 +19,7 @@ RUN set -x \
                 devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
                 ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
-                make git which ccache \
+                which ccache \
         && yum clean all -y \
         && rm -rf /var/cache/yum
 
