@@ -13,7 +13,10 @@ function run_checkout ()
   if [ ! -d $WORKDIR/cubrid-testcases ]; then
     git clone -q --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
   elif [ -d $WORKDIR/cubrid-testcases/.git ]; then
-    (cd $WORKDIR/cubrid-testcases && git clean -df)
+    cd $WORKDIR/cubrid-testcases && \
+    git fetch -q --depth 1 origin $BRANCH_TESTCASES && \
+    git reset --hard FETCH_HEAD && \
+    git clean -df
   else
     echo "Cannot find .git from $WORKDIR/cubrid-testcases directory!"
     return 1
@@ -55,7 +58,11 @@ function run_dist ()
 
 function run_test ()
 {
-  run_checkout
+  if [ -z "$CIRCLECI" ]; then
+    run_checkout
+  else
+    echo "[info] Skipping run_checkout in run_test on CircleCI"
+  fi
 
   #CUBRIDQA-1093. disable reuse_oid 
   cd $WORKDIR/cubrid-testtools

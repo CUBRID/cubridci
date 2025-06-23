@@ -13,11 +13,15 @@ RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\
 RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
 
 RUN set -x \
-        && yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
+        && yum install -y epel-release \
+        && yum install -y --setopt=tsflags=nodocs \
+                devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
                 devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
                 ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
-        && yum clean all -y
+                which ccache \
+        && yum clean all -y \
+        && rm -rf /var/cache/yum
 
 # install bison 3 for PR #1125
 ENV BISON_VERSION 3.0.5
@@ -60,6 +64,10 @@ RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
 # install multi-language locale for unicode test
 RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
 RUN localedef -f EUC-KR -i ko_KR ko_KR.euckr
+
+# ccache configuration
+ENV CC="ccache gcc"
+ENV CXX="ccache g++"
 
 COPY docker-entrypoint.sh /entrypoint.sh
 
