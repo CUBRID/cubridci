@@ -82,9 +82,8 @@ report_test() {
   fi
 
   local retry_num
-  if [ -f "$snapshot_file" ]; then
-    retry_num=$(awk -F= '/^testcase_retry_num=/ {print $2}' "$snapshot_file")
-  else
+  retry_num=$(awk -F= '/^testcase_retry_num=/ {print $2}' "$snapshot_file")
+  if [ -z "$retry_num" ]; then
     retry_num=0
   fi
 
