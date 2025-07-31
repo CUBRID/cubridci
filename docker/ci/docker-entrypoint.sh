@@ -51,11 +51,12 @@ run_checkout() {
 # Function to run tests
 run_test() {
   debug "run_test()" "$LINENO"
+  local feedback_file="$CTP_HOME/result/shell/current_runtime_logs/feedback.log"
   
   ( cd $CTP_HOME && HOME=$WORKDIR ./bin/ctp.sh shell -c $CTP_HOME/conf/shell_ci.conf )
   
   set +e
-  report_test $TEST_REPORT
+  report_test $TEST_REPORT $feedback_file
   ret=$?
   # set -e
   # if [ $ret -gt 0 ]; then
@@ -72,8 +73,7 @@ report_test() {
   local xml_output=$1
   local summary_xml=$xml_output/summary.xml
   local junit_xml=$xml_output/test-${TEST_SUITE}.xml
-  local feedback_file="$CTP_HOME/result/shell/current_runtime_logs/feedback.log"
-  local snapshot_file="$CTP_HOME/result/shell/current_runtime_logs/main_snapshot.properties"
+  local feedback_file=$2
 
   # Validate input
   if [ ! -f "$feedback_file" ]; then
@@ -81,18 +81,12 @@ report_test() {
     return 1
   fi
 
-  local retry_num
-  retry_num=$(awk -F= '/^testcase_retry_num=/ {print $2}' "$snapshot_file")
-  if [ -z "$retry_num" ]; then
-    retry_num=0
-  fi
-
   # Initialize summary XML file with header
   mkdir -p "$xml_output"
   cat > "$summary_xml" << EOF
 <results>
 EOF
-awk -v MAX_RETRY="$retry_num" '
+awk '
   # SKIP_BY_MACRO pattern
   /\[SKIP_BY_MACRO\].*cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/ {
     match($0, /cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/);
@@ -134,11 +128,6 @@ awk -v MAX_RETRY="$retry_num" '
     match($0, /cubrid-testcases-private-ex\/shell\/[^ ]+\.sh/);
     nok_test = substr($0, RSTART, RLENGTH);
     sub("cubrid-testcases-private-ex/", "", nok_test);
-    if (match($0, /TRY-> = [0-9]+/)) {
-      try_count = substr($0, RSTART+7, RLENGTH-7);
-    } else {
-      try_count = 0;
-    }
     nok_pending = 1;
     error_text = $0 "\n";
     next;
@@ -155,9 +144,7 @@ awk -v MAX_RETRY="$retry_num" '
     match($0, /time=[0-9]+/);
     time = substr($0, RSTART+5, RLENGTH-5);
     error_text = error_text $0 "\n";
-    if (try_count == MAX_RETRY) {
-      print "  <scenario>\n     <case>" nok_test "</case>\n     <elapsetime>" time "</elapsetime>\n     <result>fail</result>\n     <failure_message>Test failed</failure_message>\n     <error_content><![CDATA[" error_text "]]></error_content>\n  </scenario>";
-    }
+    print "  <scenario>\n     <case>" nok_test "</case>\n     <elapsetime>" time "</elapsetime>\n     <result>fail</result>\n     <failure_message>Test failed</failure_message>\n     <error_content><![CDATA[" error_text "]]></error_content>\n  </scenario>";
     nok_pending = 0;
     next;
   }
