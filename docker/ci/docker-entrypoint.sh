@@ -70,13 +70,15 @@ run_test() {
 report_test() {
   debug "report_test()" "$LINENO"
   local xml_output=$1
-  local junit_xml=$xml_output/test-${TEST_SUITE}.xml
   local runtime_logs="$CTP_HOME/result/shell/current_runtime_logs"
+  local xml_log="$runtime_logs/test-${TEST_SUITE}.xml"
   local status_log="$runtime_logs/test_status.data"
 
-  cp $runtime_logs/test-${TEST_SUITE}.xml $junit_xml
+  debug "CTP log generated: $(ls -la $(readlink -f $runtime_logs))" "$LINENO"
+  mkdir -p "$xml_output"
+  cp -f $xml_log $xml_output/test-${TEST_SUITE}.xml
   
-  debug "JUnit XML generated: $(ls -la $(readlink -f $junit_xml))" "$LINENO"
+  debug "JUnit XML generated: $(ls -la $(readlink -f $xml_output))" "$LINENO"
   
   # Check if there are any failed test cases
   local total_fail_case_count=$(awk -F'=' '/total_fail_case_count/ {print $2}' $status_log)
