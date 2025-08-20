@@ -15,14 +15,17 @@ configure() {
   sudo /usr/sbin/sshd
 
   debug "`env`" "$LINENO"
-  debug "configure done. $ENV" "$LINENO"
+  git config --global url."https://x-access-token:${GHI_TOKEN}@github.com/".insteadof https://github.com/
+  debug "configure done. $(git config -l)" "$LINENO"
+
+  debug "configure done." "$LINENO"
 }
 
 # Function to clone Git repository
 clone_repository() {
   local repo=$1
   local branch=$2
-  local url="https://${GITHUB_TOKEN}@github.com/CUBRID/$repo.git"
+  local url="https://github.com/CUBRID/$repo.git"
   
   debug "clone_repository $repo $branch $url" "$LINENO"
   if [ ! -d "$WORKDIR/$repo" ]; then
@@ -33,7 +36,7 @@ clone_repository() {
     debug "Cannot find .git from $WORKDIR/$repo directory!" "$LINENO"
     exit 1
   fi
-  debug "`ls -la $WORKDIR/$repo`" "$LINENO"
+  debug "$(ls -la $WORKDIR/$repo)" "$LINENO"
 }
 
 # Git configuration and repository cloning
@@ -53,6 +56,8 @@ run_test() {
   debug "run_test()" "$LINENO"
   
   ( cd $CTP_HOME && HOME=$WORKDIR ./bin/ctp.sh shell -c $CTP_HOME/conf/shell_ci.conf )
+
+  git config --global --unset-all url."https://x-access-token:${GHI_TOKEN}@github.com/".insteadof || true
   
   set +e
   report_test $TEST_REPORT
