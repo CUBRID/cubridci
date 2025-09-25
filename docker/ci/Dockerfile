@@ -7,6 +7,7 @@ RUN dnf install -y epel-release && \
     dnf install -y --setopt=install_weak_deps=False \
     # Build and Development tools
     gcc-c++ \
+    gdb \
     git \
     # System utilities
     vim-minimal \
