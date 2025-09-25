@@ -14,6 +14,9 @@ configure() {
 
   sudo /usr/sbin/sshd
 
+  ulimit -c 10485760
+  debug "core file size (10mb): `ulimit -c`" "$LINENO"
+
   debug "`env`" "$LINENO"
   git config --global url."https://x-access-token:${GHI_TOKEN}@github.com/".insteadof https://github.com/
   debug "configure done. $(git config -l)" "$LINENO"
