@@ -58,6 +58,7 @@ run_checkout() {
 run_test() {
   debug "run_test()" "$LINENO"
   
+  set +e
   ( cd $CTP_HOME && HOME=$WORKDIR ./bin/ctp.sh shell -c $CTP_HOME/conf/shell_ci.conf )
   ctp_ret=$?
 
@@ -69,7 +70,6 @@ run_test() {
     exit $ctp_ret
   fi
   
-  set +e
   report_test $TEST_REPORT
   ret=$?
   set -e
