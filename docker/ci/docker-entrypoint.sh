@@ -59,8 +59,15 @@ run_test() {
   debug "run_test()" "$LINENO"
   
   ( cd $CTP_HOME && HOME=$WORKDIR ./bin/ctp.sh shell -c $CTP_HOME/conf/shell_ci.conf )
+  ctp_ret=$?
 
   git config --global --unset-all url."https://x-access-token:${GHI_TOKEN}@github.com/".insteadof || true
+
+  # Check if CTP execution failed and exit immediately
+  if [ $ctp_ret -ne 0 ]; then
+    debug "CTP execution failed with exit code: $ctp_ret" "$LINENO"
+    exit $ctp_ret
+  fi
   
   set +e
   report_test $TEST_REPORT
