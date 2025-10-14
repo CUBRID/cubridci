@@ -47,6 +47,12 @@ RUN ssh-keygen -A && \
     ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime && \
     echo "Asia/Seoul" > /etc/timezone
 
+# install multi-language locale for unicode test
+RUN localedef -f UTF-8 -i ko_KR ko_KR.UTF-8 \
+ && localedef -f EUC-KR -i ko_KR ko_KR.EUC-KR \
+ && localedef -f UTF-8 -i en_US en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
 #circleci env
 ENV TEST_REPORT=/tmp/tests
 ENV BASELINE none
