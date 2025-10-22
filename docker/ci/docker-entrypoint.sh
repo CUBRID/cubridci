@@ -180,10 +180,10 @@ function report_test ()
    </testsuites>
  </xsl:template>
  <xsl:template match="scenario">
-   <testcase classname="{$target}" name="{case}" time="{elapsetime div 1000}">
-   <xsl:variable name="testcase" select="case"/>
-   <xsl:variable name="report" select="concat($casedir, substring-before($testcase, '.sql'), '.report')"/>
+   <testcase classname="{$target}" name="{case}" file="cubrid-testcases/{case}" time="{elapsetime div 1000}">
       <xsl:if test="result='fail'">
+        <xsl:variable name="testcase" select="case"/>
+        <xsl:variable name="report" select="concat($casedir, substring-before($testcase, '.sql'), '.report')"/>
         <xsl:copy-of select="document($report)"/>
       </xsl:if>
    </testcase>
