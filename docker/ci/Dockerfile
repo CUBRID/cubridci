@@ -12,10 +12,9 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1 
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 2 && \
     update-alternatives --set python3 /usr/bin/python3.12
 
-RUN pip3.12 install 'urllib3<2.0' Sphinx==8.1.3 \
-    sphinx_design sphinx_copybutton myst_parser sphinxext-rediraffe \
-    sphinx_togglebutton sphinx_favicon sphinx_sitemap \
-    weasyprint==64.1 sphinx-simplepdf==1.6 sphinx-rtd-theme sphinx-autobuild
+RUN pip3.12 install 'urllib3<2.0' Sphinx==8.2.3 \
+    sphinx_design sphinxext-rediraffe sphinxawesome-theme==6.0.0b3 \
+    weasyprint==64.1 sphinx-simplepdf==1.7 sphinx-rtd-theme sphinx-autobuild
 
 RUN dnf clean all
 RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
@@ -24,6 +23,5 @@ RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
 RUN echo 'alias ll="ls -al"' >> /etc/bashrc && \
     echo 'alias ls="ls --color=auto"' >> /etc/bashrc && \
     echo 'alias grep="grep --color=auto"' >> /etc/bashrc && \
-    echo 'alias diff="diff --color=auto"' >> /etc/bashrc
-
-RUN ln -sf /usr/bin/vim /usr/bin/vi
+    echo 'alias diff="diff --color=auto"' >> /etc/bashrc && \
+    ln -sf /usr/bin/vim /usr/bin/vi
