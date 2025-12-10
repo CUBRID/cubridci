@@ -13,7 +13,10 @@ function run_checkout ()
   if [ ! -d $WORKDIR/cubrid-testcases ]; then
     git clone -q --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
   elif [ -d $WORKDIR/cubrid-testcases/.git ]; then
-    (cd $WORKDIR/cubrid-testcases && git clean -df)
+    cd $WORKDIR/cubrid-testcases && \
+    git fetch -q --depth 1 origin $BRANCH_TESTCASES && \
+    git reset --hard FETCH_HEAD && \
+    git clean -df
   else
     echo "Cannot find .git from $WORKDIR/cubrid-testcases directory!"
     return 1
@@ -55,7 +58,11 @@ function run_dist ()
 
 function run_test ()
 {
-  run_checkout
+  if [ -z "$CIRCLECI" ]; then
+    run_checkout
+  else
+    echo "[info] Skipping run_checkout in run_test on CircleCI"
+  fi
 
   #CUBRIDQA-1093. disable reuse_oid 
   cd $WORKDIR/cubrid-testtools
@@ -135,35 +142,15 @@ function report_test ()
     resultfile=${f/%.sql/.result}
     reportfile=${f/%.sql/.report} && echo "<failure message='unexpected result'><![CDATA[" > $reportfile
 
-    diffdir=$(mktemp -d)
-    #egrep -v '^--|^$' $casefile | csplit -n0 -sz -f $diffdir/testcase - '/;/' '{*}'
-    egrep -v $'^--|^\s*$|^autocommit|^\r|^\s*\$' $casefile | awk -v outdir="$diffdir" '{printf "%s;\n", $0 > outdir"/testcase"NR-1}' RS=';[ \t\r]*\n'
-    nq=$(ls $diffdir/testcase* | wc -l)
-    csplit -n0 -sz -f $diffdir/answer $answerfile '/===================================================/' '{*}'
-    na=$(ls $diffdir/answer* | wc -l)
-    csplit -n0 -sz -f $diffdir/result $resultfile '/===================================================/' '{*}'
-    nr=$(ls $diffdir/result* | wc -l)
-
     ncount=$((ncount+1))
     printf "%115s\n" "($ncount/$nfailed)" | tr ' ' '-'
     testcases_case_url="$testcases_base_url/${casefile##*$testcases_root_dir/}"
     testcases_answer_url="$testcases_base_url/${answerfile##*$testcases_root_dir/}"
-    echo "** Testcase : ${casefile##*$testcases_root_dir/} (has $nq queries) - $testcases_case_url" | tee -a $reportfile
+    echo "** Testcase : ${casefile##*$testcases_root_dir/} - $testcases_case_url" | tee -a $reportfile
     echo "** Expected : ${answerfile##*$testcases_root_dir/} - $testcases_answer_url" | tee -a $reportfile
-    #echo "** Actual   : ${resultfile##*$testcases_root_dir/}"
-    [ $nq -eq $na -a $nq -eq $nr ] || { echo "Parse error ($nq != $na != $nr)"; return 1; }
-    for i in $(awk "BEGIN { for (i=0; i<$nq; i++) printf(\"%d \", i) }"); do
-      if $(cmp -s $diffdir/answer$i $diffdir/result$i) ; then
-        continue
-      else
-        echo "** Failed query #$((i+1)) (in $(basename $casefile)):"
-        cat $diffdir/testcase$i
-        echo "** Difference between Expected(-) and Actual(+) results:"
-        diff -u $diffdir/answer$i $diffdir/result$i | tail -n+3
-      fi
-    done | tee -a $reportfile
+    echo "** Difference between Expected(-) and Actual(+) results:"
+    diff -ut $answerfile $resultfile | tee -a $reportfile
     echo "]]></failure>" >> $reportfile
-    rm -rf $diffdir
 
     if [ $max_print_failed -ne 0 -a $ncount -ge $max_print_failed ]; then
       break
@@ -193,10 +180,10 @@ function report_test ()
    </testsuites>
  </xsl:template>
  <xsl:template match="scenario">
-   <testcase classname="{$target}" name="{case}" time="{elapsetime div 1000}">
-   <xsl:variable name="testcase" select="case"/>
-   <xsl:variable name="report" select="concat($casedir, substring-before($testcase, '.sql'), '.report')"/>
+   <testcase classname="{$target}" name="{case}" file="cubrid-testcases/{case}" time="{elapsetime div 1000}">
       <xsl:if test="result='fail'">
+        <xsl:variable name="testcase" select="case"/>
+        <xsl:variable name="report" select="concat($casedir, substring-before($testcase, '.sql'), '.report')"/>
         <xsl:copy-of select="document($report)"/>
       </xsl:if>
    </testcase>

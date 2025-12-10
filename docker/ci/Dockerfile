@@ -1,4 +1,4 @@
-FROM centos:7
+FROM centos:6
 
 LABEL Description="This is a build and test environment image for CUBRID"
 
@@ -12,31 +12,16 @@ RUN sed -i -e "s/^# baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.c
 RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
 RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
 
-RUN set -x && \
-    yum install -y epel-release && \
-    yum install -y --setopt=tsflags=nodocs \
-        devtoolset-8-gcc \
-        devtoolset-8-gcc-c++ \
-        devtoolset-8-make \
-        devtoolset-8-elfutils-libelf-devel \
-        devtoolset-8-systemtap-sdt-devel \
-        ncurses-devel \
-        cmake \
-        java-1.8.0-openjdk-devel \
-        ant \
-        flex \
-        sclo-git212 \
-        wget \
-        libxslt \
-        rpm-build \
-        libtool \
-        libtool-ltdl \
-        autoconf \
-        automake \
-        make \
-        git \
-        which \
-    && yum clean all -y
+RUN set -x \
+        && yum install -y epel-release \
+        && yum install -y --setopt=tsflags=nodocs \
+                devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
+                devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
+                ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
+                rpm-build libtool libtool-ltdl autoconf automake \
+                which ccache \
+        && yum clean all -y \
+        && rm -rf /var/cache/yum
 
 RUN set -x && \
     yum install -y --setopt=tsflags=nodocs \
@@ -45,11 +30,6 @@ RUN set -x && \
         openblas-devel \
         lapack-devel \
         devtoolset-8-gcc-gfortran \
-    && yum clean all -y
-
-RUN set -x && \
-    yum install -y --setopt=tsflags=nodocs \
-        ccache \
     && yum clean all -y
 
 # install bison 3 for PR #1125
@@ -91,8 +71,14 @@ RUN ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
 RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
 
 # install multi-language locale for unicode test
-RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
-RUN localedef -f EUC-KR -i ko_KR ko_KR.euckr
+RUN localedef -f UTF-8 -i ko_KR ko_KR.UTF-8 \
+ && localedef -f EUC-KR -i ko_KR ko_KR.EUC-KR \
+ && localedef -f UTF-8 -i en_US en_US.UTF-8
+ENV LC_ALL=en_US
+
+# ccache configuration
+ENV CC="ccache gcc"
+ENV CXX="ccache g++"
 
 COPY docker-entrypoint.sh /entrypoint.sh
 
