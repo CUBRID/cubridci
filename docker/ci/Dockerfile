@@ -15,9 +15,14 @@ RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.ce
 RUN set -x \
         && yum install -y --setopt=tsflags=nodocs devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
                 devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
-                ncurses-devel cmake java-1.8.0-openjdk-devel ant flex sclo-git212 wget libxslt \
+                ncurses-devel cmake ant flex sclo-git212 wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
         && yum clean all -y
+
+# install Adoptium Temurin JDK 8
+ENV JDK_URL="https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u442-b06/OpenJDK8U-jdk_x64_linux_hotspot_8u442b06.tar.gz"
+RUN curl -L $JDK_URL | tar xzvf - -C /opt \
+    && ln -s /opt/jdk8u442-b06 /opt/jdk8
 
 # install bison 3 for PR #1125
 ENV BISON_VERSION 3.0.5
@@ -40,7 +45,7 @@ RUN source scl_source enable devtoolset-8 \
     && rm -rf ninja-$NINJA_VERSION
 
 ENV WORKDIR /home
-ENV JAVA_HOME /usr/lib/jvm/java
+ENV JAVA_HOME /opt/jdk8
 
 # CUBRID envronment variables
 ENV CUBRID $WORKDIR/CUBRID
