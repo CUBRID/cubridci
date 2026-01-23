@@ -14,7 +14,7 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1 
 
 RUN pip3.12 install 'urllib3<2.0' Sphinx==8.2.3 \
     sphinx_design sphinxext-rediraffe sphinxawesome-theme==6.0.0b3 \
-    weasyprint==64.1 sphinx-simplepdf==1.7 sphinx-rtd-theme sphinx-autobuild
+    weasyprint==68.0 sphinx-simplepdf==1.7 sphinx-rtd-theme sphinx-autobuild
 
 RUN dnf clean all
 RUN localedef -f UTF-8 -i ko_KR ko_KR.utf8
