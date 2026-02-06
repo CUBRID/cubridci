@@ -1,27 +1,22 @@
-FROM centos:6
+FROM rockylinux:8
 
 LABEL Description="This is a build and test environment image for CUBRID"
 
-RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-Base.repo
-RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-Base.repo
-
-RUN yum install -y centos-release-scl
-
-RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl.repo
-RUN sed -i -e "s/^# baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl.repo
-RUN sed -i -e "s/^mirrorlist=http:\/\/mirrorlist.centos.org/#mirrorlist=http:\/\/mirrorlist.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
-RUN sed -i -e "s/^#baseurl=http:\/\/mirror.centos.org/baseurl=https:\/\/vault.centos.org/g" /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo
+RUN dnf install -y dnf-plugins-core && \
+    dnf config-manager --set-enabled powertools || \
+    dnf config-manager --set-enabled crb
 
 RUN set -x \
-        && yum install -y epel-release \
-        && yum install -y --setopt=tsflags=nodocs \
-                devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
-                devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
-                ncurses-devel cmake ant flex sclo-git212 wget libxslt \
+        && dnf install -y epel-release \
+        && dnf install -y --setopt=tsflags=nodocs \
+                gcc gcc-c++ make \
+                elfutils-libelf-devel systemtap-sdt-devel \
+                ncurses-devel ant flex git wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
                 which ccache \
-        && yum clean all -y \
-        && rm -rf /var/cache/yum
+                glibc-locale-source glibc-langpack-en glibc-langpack-ko \
+        && dnf clean all -y \
+        && rm -rf /var/cache/dnf
 
 # install Adoptium Temurin JDK 8
 ENV JDK_URL="https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u442-b06/OpenJDK8U-jdk_x64_linux_hotspot_8u442b06.tar.gz"
@@ -42,8 +37,7 @@ RUN curl -L https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/c
 
 # install ninja generator
 ENV NINJA_VERSION 1.11.1
-RUN source scl_source enable devtoolset-8 \
-	&& curl -L https://github.com/ninja-build/ninja/archive/refs/tags/v$NINJA_VERSION.tar.gz | tar xzvf - \
+RUN curl -L https://github.com/ninja-build/ninja/archive/refs/tags/v$NINJA_VERSION.tar.gz | tar xzvf - \
     && cd ninja-$NINJA_VERSION && cmake -Bbuild-cmake && cmake --build build-cmake \
     && mv build-cmake/ninja /usr/bin/ninja && cd .. \
     && rm -rf ninja-$NINJA_VERSION
@@ -54,7 +48,7 @@ ENV JAVA_HOME /opt/jdk8
 # CUBRID envronment variables
 ENV CUBRID $WORKDIR/CUBRID
 ENV CUBRID_DATABASES $CUBRID/databases
-ENV PATH $CUBRID/bin:/opt/rh/sclo-git212/root/usr/bin:$PATH
+ENV PATH $JAVA_HOME/bin:$CUBRID/bin:$PATH
 ENV LD_LIBRARY_PATH $CUBRID/lib:$CUBRID/cci/lib
 ENV TEST_SUITE medium:sql
 ENV TEST_REPORT /tmp/tests
@@ -70,7 +64,7 @@ RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
 RUN localedef -f UTF-8 -i ko_KR ko_KR.UTF-8 \
  && localedef -f EUC-KR -i ko_KR ko_KR.EUC-KR \
  && localedef -f UTF-8 -i en_US en_US.UTF-8
-ENV LC_ALL=en_US
+ENV LC_ALL=en_US.UTF-8
 
 # ccache configuration
 ENV CC="ccache gcc"
@@ -82,4 +76,4 @@ RUN chmod 775 /entrypoint.sh
 RUN chmod 777 $WORKDIR
 WORKDIR $WORKDIR
 
-ENTRYPOINT ["scl", "enable", "devtoolset-8", "--", "/entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
