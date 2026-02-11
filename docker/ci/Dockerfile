@@ -10,8 +10,8 @@ RUN set -x \
         && dnf install -y epel-release \
         && dnf install -y --setopt=tsflags=nodocs \
                 gcc gcc-c++ make \
-                python2-devel python3-devel\
-                elfutils-libelf-devel systemtap-sdt-devel libstdc++-static\
+                python2-devel python3-devel \
+                elfutils-libelf-devel systemtap-sdt-devel libstdc++-static \
                 ncurses-devel ant flex git wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
                 which ccache \
@@ -59,7 +59,7 @@ ENV BRANCH_TESTCASES develop
 # set timezone for test
 ENV TZ Asia/Seoul
 RUN ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
-RUN echo 'ZONE="Asia/Seoul' > /etc/sysconfig/clock
+RUN echo 'ZONE="Asia/Seoul"' > /etc/sysconfig/clock
 
 # install multi-language locale for unicode test
 RUN localedef -f UTF-8 -i ko_KR ko_KR.UTF-8 \
