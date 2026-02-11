@@ -10,7 +10,8 @@ RUN set -x \
         && dnf install -y epel-release \
         && dnf install -y --setopt=tsflags=nodocs \
                 gcc gcc-c++ make \
-                elfutils-libelf-devel systemtap-sdt-devel \
+                python2-devel python3-devel\
+                elfutils-libelf-devel systemtap-sdt-devel libstdc++-static\
                 ncurses-devel ant flex git wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
                 which ccache \
