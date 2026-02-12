@@ -1,4 +1,4 @@
-FROM rockylinux:8
+FROM rockylinux/rockylinux:8.10
 
 LABEL Description="This is a [shell] test environment image for CUBRID"
 
@@ -6,33 +6,17 @@ LABEL Description="This is a [shell] test environment image for CUBRID"
 RUN dnf install -y epel-release && \
     dnf install -y --setopt=install_weak_deps=False \
     # Build and Development tools
-    gcc-c++ \
-    gdb \
-    git \
+    gcc-c++ gdb git \
     # System utilities
-    vim-minimal \
-    lsof \
-    procps-ng \
-    file \
-    diffutils \
-    which \
-    csh \
+    vim-minimal lsof procps-ng file diffutils which csh glibc-locale-source glibc-langpack-en glibc-langpack-ko \
     # Network tools
-    net-tools \
-    telnet \
-    wget \
+    net-tools telnet wget \
     # System access and security
-    sudo \
-    openssh-server \
-    openssh-clients \
+    sudo openssh-server openssh-clients \
     # Java runtime
     java-1.8.0-openjdk-devel \
     # Test utilities
-    libxslt \
-    dos2unix \
-    lcov \
-    bc \
-    jq \
+    libxslt dos2unix lcov bc jq \
     expect && \
     dnf clean all && \
     rm -rf /var/cache/dnf/* && \
