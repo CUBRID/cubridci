@@ -1,4 +1,4 @@
-FROM rockylinux:8
+FROM rockylinux/rockylinux:8.10
 
 LABEL Description="This is a build and test environment image for CUBRID"
 
