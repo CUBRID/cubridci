@@ -65,7 +65,7 @@ RUN echo 'ZONE="Asia/Seoul"' > /etc/sysconfig/clock
 RUN localedef -f UTF-8 -i ko_KR ko_KR.UTF-8 \
  && localedef -f EUC-KR -i ko_KR ko_KR.EUC-KR \
  && localedef -f UTF-8 -i en_US en_US.UTF-8
-ENV LC_ALL=en_US.UTF-8
+ENV LC_ALL=en_US
 
 # ccache configuration
 ENV CC="ccache gcc"
