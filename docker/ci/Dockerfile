@@ -35,7 +35,7 @@ RUN ssh-keygen -A && \
 RUN localedef -f UTF-8 -i ko_KR ko_KR.UTF-8 \
  && localedef -f EUC-KR -i ko_KR ko_KR.EUC-KR \
  && localedef -f UTF-8 -i en_US en_US.UTF-8
-ENV LC_ALL=en_US.UTF-8
+ENV LANG=en_US.UTF-8
 
 #circleci env
 ENV TEST_REPORT=/tmp/tests
