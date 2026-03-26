@@ -12,8 +12,8 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1 
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 2 && \
     update-alternatives --set python3 /usr/bin/python3.12
 
-RUN pip3.12 install 'urllib3<2.0' Sphinx==8.2.3 \
-    sphinx_design sphinxext-rediraffe sphinxawesome-theme==6.0.0b3 \
+RUN pip3.12 install 'urllib3<2.0' Sphinx==9.1.0 \
+    sphinx_design sphinxext-rediraffe sphinxawesome-theme==6.0.0 \
     weasyprint==68.0 sphinx-simplepdf==1.7 sphinx-rtd-theme sphinx-autobuild
 
 RUN dnf clean all
