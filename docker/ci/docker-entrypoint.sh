@@ -39,13 +39,16 @@ function run_test ()
     exit 1
   fi
 
-  #CUBRIDQA-1093. disable reuse_oid
-  cd $WORKDIR/cubrid-testtools
-  CTP/bin/ini.sh -s sql/cubrid.conf CTP/conf/medium.conf create_table_reuseoid no
-  cd -
-
   for t in ${TEST_SUITE//:/ }; do
-    (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
+    case "$t" in
+      medium)
+        # CUBRIDQA-1093/CUBRID 11.x: medium_dev.conf has create_table_reuseoid=no baked in.
+        (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh medium -c $CTP_HOME/conf/medium_dev.conf)
+        ;;
+      *)
+        (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
+        ;;
+    esac
   done
 
   if [[ ":$TEST_SUITE:" =~ :(medium|sql): ]]; then
