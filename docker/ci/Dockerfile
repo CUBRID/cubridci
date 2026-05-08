@@ -56,7 +56,7 @@ ENV PATH=$CUBRID/bin:/usr/sbin:$PATH
 
 COPY docker-entrypoint.sh /entrypoint.sh
 
-RUN chmod 777 $WORKDIR && chmod 777 /entrypoint.sh
+RUN chmod 777 $WORKDIR && chmod 755 /entrypoint.sh
 
 WORKDIR $WORKDIR
 

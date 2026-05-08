@@ -1,4 +1,4 @@
-#!/bin/bash -le
+#!/bin/bash -e
 
 function run_checkout ()
 {
@@ -43,7 +43,7 @@ function run_test ()
     case "$t" in
       medium)
         # CUBRIDQA-1093/CUBRID 11.x: medium_dev.conf has create_table_reuseoid=no baked in.
-        (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh medium -c $CTP_HOME/conf/medium_dev.conf)
+        (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh medium -c CTP/conf/medium_dev.conf)
         ;;
       *)
         (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
