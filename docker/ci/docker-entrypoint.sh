@@ -140,17 +140,15 @@ function report_test ()
     answerfile=${f/\/cases\//\/answers\/}
     answerfile=${answerfile/%.sql/.answer}
     resultfile=${f/%.sql/.result}
-    reportfile=${f/%.sql/.report} && echo "<failure message='unexpected result'><![CDATA[" > $reportfile
 
     ncount=$((ncount+1))
     printf "%115s\n" "($ncount/$nfailed)" | tr ' ' '-'
     testcases_case_url="$testcases_base_url/${casefile##*$testcases_root_dir/}"
     testcases_answer_url="$testcases_base_url/${answerfile##*$testcases_root_dir/}"
-    echo "** Testcase : ${casefile##*$testcases_root_dir/} - $testcases_case_url" | tee -a $reportfile
-    echo "** Expected : ${answerfile##*$testcases_root_dir/} - $testcases_answer_url" | tee -a $reportfile
+    echo "** Testcase : ${casefile##*$testcases_root_dir/} - $testcases_case_url"
+    echo "** Expected : ${answerfile##*$testcases_root_dir/} - $testcases_answer_url"
     echo "** Difference between Expected(-) and Actual(+) results:"
-    diff -ut $answerfile $resultfile | tee -a $reportfile
-    echo "]]></failure>" >> $reportfile
+    diff -ut $answerfile $resultfile || true
 
     if [ $max_print_failed -ne 0 -a $ncount -ge $max_print_failed ]; then
       break
@@ -164,33 +162,20 @@ function report_test ()
   echo ""
 
   if [ -n "$xml_output" ]; then
-    summary_xml_list=$(find $result_path -name summary.xml)
-    for f in $summary_xml_list; do
-      target=$(dirname ${f##*schedule_})
-      target=${target%_[0-9]*_*}
-      build_mode=$(cubrid_rel | grep -oe 'release\|debug')
-      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}_${build_mode}" --stringparam casedir "${testcases_root_dir}/" - $f || true
-<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
- <xsl:output indent="yes" cdata-section-elements="failure"/>
- <xsl:template match="results">
-   <testsuites>
-     <testsuite name="{$target}" tests="{count(scenario)}" failures="{count(scenario/result[contains(.,'fail')])}">
-       <xsl:apply-templates select="scenario"/>
-     </testsuite>
-   </testsuites>
- </xsl:template>
- <xsl:template match="scenario">
-   <testcase classname="{$target}" name="{case}" file="cubrid-testcases/{case}" time="{elapsetime div 1000}">
-      <xsl:if test="result='fail'">
-        <xsl:variable name="testcase" select="case"/>
-        <xsl:variable name="report" select="concat($casedir, substring-before($testcase, '.sql'), '.report')"/>
-        <xsl:copy-of select="document($report)"/>
-      </xsl:if>
-   </testcase>
- </xsl:template>
-</xsl:stylesheet>
-_EOL
+    # CTP writes its own JUnit report (<os>_<type>_<bits>.xml, e.g. linux_sql_64bit.xml)
+    # next to summary.xml since cubrid-testtools#769; collect it for store_test_results.
+    ncopied=0
+    for f in $(find $result_path -name summary.xml); do
+      for x in "$(dirname $f)"/*.xml; do
+        [ -f "$x" ] || continue
+        [ "$(basename $x)" = "summary.xml" ] && continue
+        cp -f "$x" "$xml_output/" || true
+        ncopied=$((ncopied+1))
+      done
     done
+    if [ $ncopied -eq 0 ]; then
+      echo "[warn] no CTP JUnit XML found under $result_path (requires cubrid-testtools#769)"
+    fi
   fi
 
   if [ $nfailed -gt 0 ]; then
