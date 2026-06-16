@@ -136,22 +136,16 @@ main() {
   debug "main" "$LINENO"
   case "$1" in
     checkout)
-      set -- run_checkout
+      run_checkout
       ;;
     test)
-      set -- run_test
+      run_test
       ;;
     *)
-      echo "Unknown role: $1. Use 'checkout' or 'test'."
+      echo "Unknown role: $1. Use 'checkout' or 'test'." >&2
       exit 1
       ;;
   esac
-
-  if [ -n "$(type -t $1)" -a "$(type -t $1)" = function ]; then
-    eval "$@"
-  else
-    exec "$@"
-  fi
 }
 
 main "$@"
