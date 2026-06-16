@@ -37,7 +37,7 @@ clone_repository() {
     debug "Cannot find .git from $WORKDIR/$repo directory!" "$LINENO"
     exit 1
   fi
-  debug "$(ls -la $WORKDIR/$repo)" "$LINENO"
+  if [ "$DEBUG" = true ]; then debug "$(ls -la $WORKDIR/$repo)" "$LINENO"; fi
 }
 
 # Git configuration and repository cloning
@@ -87,11 +87,11 @@ report_test() {
   local xml_log="$runtime_logs/test-${TEST_SUITE}.xml"
   local status_log="$runtime_logs/test_status.data"
 
-  debug "CTP log generated: $(ls -la $(readlink -f $runtime_logs))" "$LINENO"
+  if [ "$DEBUG" = true ]; then debug "CTP log generated: $(ls -la $(readlink -f $runtime_logs))" "$LINENO"; fi
   mkdir -p "$xml_output"
   cp -f $xml_log $xml_output/test-${TEST_SUITE}.xml
   
-  debug "JUnit XML generated: $(ls -la $(readlink -f $xml_output))" "$LINENO"
+  if [ "$DEBUG" = true ]; then debug "JUnit XML generated: $(ls -la $(readlink -f $xml_output))" "$LINENO"; fi
   
   # Check if there are any failed test cases
   local total_fail_case_count=$(awk -F'=' '/total_fail_case_count/ {print $2}' $status_log)
