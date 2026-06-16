@@ -95,8 +95,14 @@ report_test() {
   if [ "$DEBUG" = true ]; then debug "JUnit XML generated: $(ls -la $(readlink -f $xml_output))" "$LINENO"; fi
   
   # Check if there are any failed test cases
-  local total_fail_case_count=$(awk -F'=' '/total_fail_case_count/ {print $2}' $status_log)
-  if [ $total_fail_case_count -gt 0 ]; then
+  if [ ! -f "$status_log" ]; then
+    echo "** ERROR: test status file not found: $status_log"
+    return 1
+  fi
+  local total_fail_case_count
+  total_fail_case_count=$(awk -F'=' '/total_fail_case_count/ {print $2}' "$status_log")
+  total_fail_case_count=${total_fail_case_count:-0}
+  if [ "$total_fail_case_count" -gt 0 ]; then
     echo "** $total_fail_case_count cases are failed."
     return 1
   else
