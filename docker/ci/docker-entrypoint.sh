@@ -6,6 +6,7 @@ DEBUG=true
 # Function to print debug messages
 debug() {
   [ "$DEBUG" = true ] && echo "[debug] $1 : $2"
+  return 0
 }
 
 # Function to set up environment variables
