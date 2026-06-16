@@ -98,7 +98,7 @@ report_test() {
   local total_fail_case_count=$(awk -F'=' '/total_fail_case_count/ {print $2}' $status_log)
   if [ $total_fail_case_count -gt 0 ]; then
     echo "** $total_fail_case_count cases are failed."
-    return $total_fail_case_count
+    return 1
   else
     echo "** All Tests are passed"
     return 0
