@@ -72,9 +72,6 @@ run_test() {
   report_test $TEST_REPORT
   ret=$?
   set -e
-  # if [ $ret -gt 0 ]; then
-  #   run_manual_test_result $TEST_REPORT $BASELINE
-  # fi
 
   debug "run_test() exit $ret" "$LINENO"
   exit $ret
@@ -109,26 +106,6 @@ report_test() {
     echo "** All Tests are passed"
     return 0
   fi
-}
-
-run_manual_test_result() {
-  debug "run_manual_test_result()" "$LINENO"
-  local xml_output=$1
-  local baseline=$2
-  
-  if [ "$baseline" != "none" ]; then
-    # If baseline is provided, pass it to manual_test_result
-    debug "Using provided baseline: $baseline" "$LINENO"
-    java -cp $CUBRID/jdbc/cubrid_jdbc.jar:/manual_test_result.jar manual_test_result $baseline $xml_output/test-${TEST_SUITE}.xml
-    mv -f $baseline*new.csv $xml_output 2>/dev/null || true
-  else
-    # If baseline is not provided, let manual_test_result find the latest version
-    debug "No baseline provided, using latest from DB" "$LINENO"
-    java -cp $CUBRID/jdbc/cubrid_jdbc.jar:/manual_test_result.jar manual_test_result $xml_output/test-${TEST_SUITE}.xml
-    mv -f *new.csv $xml_output 2>/dev/null || true
-  fi
-
-  debug "csv file generated: $(ls -la $(readlink -f $xml_output))" "$LINENO"
 }
 
 # Main execution function
