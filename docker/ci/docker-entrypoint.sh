@@ -30,9 +30,9 @@ clone_repository() {
   
   debug "clone_repository $repo $branch $url" "$LINENO"
   if [ ! -d "$WORKDIR/$repo" ]; then
-    sudo -E -u "$USER" bash -c "git -c fetch.parallel=0 -c core.compression=9 clone -q --depth 1 --branch $branch --single-branch --no-tags $url $WORKDIR/$repo"
+    git -c fetch.parallel=0 -c core.compression=9 clone -q --depth 1 --branch $branch --single-branch --no-tags $url $WORKDIR/$repo
   elif [ -d "$WORKDIR/$repo" ]; then
-    sudo -E -u "$USER" bash -c "cd $WORKDIR/$repo && git fetch --depth 1 origin $branch && git reset --hard origin/$branch && git clean -df"
+    ( cd $WORKDIR/$repo && git fetch --depth 1 origin $branch && git reset --hard origin/$branch && git clean -df )
   else
     debug "Cannot find .git from $WORKDIR/$repo directory!" "$LINENO"
     exit 1
