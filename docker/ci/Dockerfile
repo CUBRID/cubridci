@@ -60,11 +60,9 @@ ENV LIBPATH=$LD_LIBRARY_PATH
 ENV PATH=$CUBRID/bin:/usr/sbin:$PATH
 
 COPY docker-entrypoint.sh /entrypoint.sh
-COPY manual_test_result.jar /manual_test_result.jar
 
 RUN chmod 777 $WORKDIR && \
-    chmod 777 /entrypoint.sh && \
-    chmod 777 /manual_test_result.jar
+    chmod 777 /entrypoint.sh
 
 WORKDIR $WORKDIR
 
