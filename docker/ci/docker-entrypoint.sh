@@ -80,23 +80,11 @@ function run_test ()
 
 function report_test ()
 {
-  local ncount=0
-  local max_print_failed=50
-
-  while getopts "x:n:" opt; do
-    case $opt in
-      x)
-        xml_output="$OPTARG"
-        [ ! -d "$xml_output" ] && mkdir -p "$xml_output"
-        ;;
-      n)
-        max_print_failed=$OPTARG
-        ;;
-      *)
-        ;;
-    esac
-  done
-  shift $(($OPTIND - 1))
+  if [ "$1" = "-x" ]; then
+    xml_output="$2"
+    mkdir -p "$xml_output"
+    shift 2
+  fi
 
   if [ $# -lt 1 ]; then
     return 1
@@ -110,9 +98,8 @@ function report_test ()
   #In case of testing nothing due to an error like failure to load a library.
   if [ `find $result_path -type f -name summary_info | wc -l` -eq 0 ]; then
      echo "Nothing is tested because of an error."
-     exit 1 
+     exit 1
   fi
-
 
   failed_list=$(find $result_path -name summary_info | xargs -n1 grep -hw nok | awk -F: '{print $1}')
   if [ -z "$failed_list" ]; then
@@ -120,86 +107,33 @@ function report_test ()
   else
     nfailed=$(echo "$failed_list" | wc -l)
   fi
-  echo ""
-  if [ $max_print_failed -ne 0 -a $nfailed -gt $max_print_failed ]; then
-    echo "** There are too many failed ($nfailed) Testcases on this test."
-    echo "** It will print details of only $max_print_failed failed Testcases."
-  elif [ $nfailed -gt 0 ]; then
-    echo "** There are $nfailed failed Testcases on this test."
-    echo "** It will print details of $nfailed failed Testcases."
-  fi
-  echo ""
-
-  testcases_root_dir="$WORKDIR/cubrid-testcases"
-  testcases_remote_url=$(cd $testcases_root_dir && git config --get remote.origin.url)
-  testcases_hash=$(cd $testcases_root_dir && git rev-parse HEAD)
-  testcases_base_url="${testcases_remote_url%.git}/blob/$testcases_hash"
-
-  for f in $failed_list; do
-    casefile=$f
-    answerfile=${f/\/cases\//\/answers\/}
-    answerfile=${answerfile/%.sql/.answer}
-    resultfile=${f/%.sql/.result}
-    reportfile=${f/%.sql/.report} && echo "<failure message='unexpected result'><![CDATA[" > $reportfile
-
-    ncount=$((ncount+1))
-    printf "%115s\n" "($ncount/$nfailed)" | tr ' ' '-'
-    testcases_case_url="$testcases_base_url/${casefile##*$testcases_root_dir/}"
-    testcases_answer_url="$testcases_base_url/${answerfile##*$testcases_root_dir/}"
-    echo "** Testcase : ${casefile##*$testcases_root_dir/} - $testcases_case_url" | tee -a $reportfile
-    echo "** Expected : ${answerfile##*$testcases_root_dir/} - $testcases_answer_url" | tee -a $reportfile
-    echo "** Difference between Expected(-) and Actual(+) results:"
-    diff -ut $answerfile $resultfile | tee -a $reportfile
-    echo "]]></failure>" >> $reportfile
-
-    if [ $max_print_failed -ne 0 -a $ncount -ge $max_print_failed ]; then
-      break
-    fi
-  done
-
-  if [ $max_print_failed -ne 0 -a $nfailed -gt $max_print_failed ]; then
-    printf "%115s\n" | tr ' ' '-'
-    echo "** More than $max_print_failed failed Testcases are omitted. (There are $nfailed failed Testcases on this test)"
-  fi
-  echo ""
 
   if [ -n "$xml_output" ]; then
-    summary_xml_list=$(find $result_path -name summary.xml)
-    for f in $summary_xml_list; do
-      target=$(dirname ${f##*schedule_})
-      target=${target%_[0-9]*_*}
-      build_mode=$(cubrid_rel | grep -oe 'release\|debug')
-      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}_${build_mode}" --stringparam casedir "${testcases_root_dir}/" - $f || true
-<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
- <xsl:output indent="yes" cdata-section-elements="failure"/>
- <xsl:template match="results">
-   <testsuites>
-     <testsuite name="{$target}" tests="{count(scenario)}" failures="{count(scenario/result[contains(.,'fail')])}">
-       <xsl:apply-templates select="scenario"/>
-     </testsuite>
-   </testsuites>
- </xsl:template>
- <xsl:template match="scenario">
-   <testcase classname="{$target}" name="{case}" file="cubrid-testcases/{case}" time="{elapsetime div 1000}">
-      <xsl:if test="result='fail'">
-        <xsl:variable name="testcase" select="case"/>
-        <xsl:variable name="report" select="concat($casedir, substring-before($testcase, '.sql'), '.report')"/>
-        <xsl:copy-of select="document($report)"/>
-      </xsl:if>
-   </testcase>
- </xsl:template>
-</xsl:stylesheet>
-_EOL
+    # CTP writes its own JUnit report (<os>_<type>_<bits>.xml, e.g. linux_sql_64bit.xml)
+    # next to summary.xml since cubrid-testtools#769. Collect it for store_test_results;
+    # per-case failure details (query, diff, source links) live in its <failure> CDATA
+    # and are shown in the CircleCI 'Tests' tab, so they are no longer printed here.
+    ncopied=0
+    for f in $(find $result_path -name summary.xml); do
+      for x in "$(dirname $f)"/*.xml; do
+        [ -f "$x" ] || continue
+        [ "$(basename $x)" = "summary.xml" ] && continue
+        cp -f "$x" "$xml_output/" || true
+        ncopied=$((ncopied+1))
+      done
     done
+    if [ $ncopied -eq 0 ]; then
+      echo "[warn] no CTP JUnit XML found under $result_path (requires cubrid-testtools#769)"
+    fi
   fi
 
   if [ $nfailed -gt 0 ]; then
     echo "** There are $nfailed failed Testcases on this test."
     echo "** All failed Testcases are listed below:"
     for f in $failed_list ; do
-      echo " - ${f##*$testcases_root_dir/}"
+      echo " - ${f##*$WORKDIR/cubrid-testcases/}"
     done
-    echo "** $nfailed cases are failed."
+    echo "** See the CircleCI 'Tests' tab for per-case queries, diffs and source links."
     exit $nfailed
   else
     echo "** All Tests are passed"
