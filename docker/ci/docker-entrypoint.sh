@@ -1,11 +1,14 @@
-#!/bin/bash -le
+#!/bin/bash -e
 
 function run_checkout ()
 {
   if [ ! -d $WORKDIR/cubrid-testtools ]; then
     git clone -q --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools $WORKDIR/cubrid-testtools
   elif [ -d $WORKDIR/cubrid-testtools/.git ]; then
-    (cd $WORKDIR/cubrid-testtools && git clean -df)
+    (cd $WORKDIR/cubrid-testtools && \
+     git fetch -q --depth 1 origin $BRANCH_TESTTOOLS && \
+     git reset --hard FETCH_HEAD && \
+     git clean -df)
   else
     echo "Cannot find .git from $WORKDIR/cubrid-testtools directory!"
     return 1
@@ -13,47 +16,14 @@ function run_checkout ()
   if [ ! -d $WORKDIR/cubrid-testcases ]; then
     git clone -q --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
   elif [ -d $WORKDIR/cubrid-testcases/.git ]; then
-    cd $WORKDIR/cubrid-testcases && \
-    git fetch -q --depth 1 origin $BRANCH_TESTCASES && \
-    git reset --hard FETCH_HEAD && \
-    git clean -df
+    (cd $WORKDIR/cubrid-testcases && \
+     git fetch -q --depth 1 origin $BRANCH_TESTCASES && \
+     git reset --hard FETCH_HEAD && \
+     git clean -df)
   else
     echo "Cannot find .git from $WORKDIR/cubrid-testcases directory!"
     return 1
   fi
-
-}
-
-function run_build ()
-{
-  if [ -f ./build.sh ]; then
-    CUBRID_SRCDIR=.
-  elif [ -f cubrid/build.sh ]; then
-    CUBRID_SRCDIR=cubrid
-  else
-    echo "Cannot find CUBRID source directory!"
-    return 1
-  fi
-
-  (cd $CUBRID_SRCDIR \
-    && ./build.sh -p $CUBRID $@ clean build) | tee build.log | grep -e '\[[ 0-9]\+%\]' -e ' error: ' -e '\[[0-9]\+\/[0-9]\+\]' || { tail -500 build.log; false; }
-
-  grep "Building failed" $CUBRID_SRCDIR/build.log && exit 1 || { true; }  
-}
-
-function run_dist ()
-{
-  if [ -f ./build.sh ]; then
-    CUBRID_SRCDIR=.
-  elif [ -f cubrid/build.sh ]; then
-    CUBRID_SRCDIR=cubrid
-  else
-    echo "Cannot find CUBRID source directory!"
-    return 1
-  fi
-
-  (cd $CUBRID_SRCDIR \
-    && ./build.sh -p $CUBRID $@ dist) | tee dist.log
 }
 
 function run_test ()
@@ -64,13 +34,21 @@ function run_test ()
     echo "[info] Skipping run_checkout in run_test on CircleCI"
   fi
 
-  #CUBRIDQA-1093. disable reuse_oid 
-  cd $WORKDIR/cubrid-testtools
-  CTP/bin/ini.sh -s sql/cubrid.conf CTP/conf/medium.conf create_table_reuseoid no
-  cd -
+  if [ ! -x "$CUBRID/bin/cubrid_rel" ]; then
+    echo "[error] CUBRID is not installed at $CUBRID. Install before invoking 'test'."
+    exit 1
+  fi
 
   for t in ${TEST_SUITE//:/ }; do
-    (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
+    case "$t" in
+      medium)
+        # CUBRIDQA-1093/CUBRID 11.x: medium_dev.conf has create_table_reuseoid=no baked in.
+        (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh medium -c CTP/conf/medium_dev.conf)
+        ;;
+      *)
+        (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
+        ;;
+    esac
   done
 
   if [[ ":$TEST_SUITE:" =~ :(medium|sql): ]]; then
@@ -110,7 +88,7 @@ function report_test ()
   #In case of testing nothing due to an error like failure to load a library.
   if [ `find $result_path -type f -name summary_info | wc -l` -eq 0 ]; then
      echo "Nothing is tested because of an error."
-     exit 1 
+     exit 1
   fi
 
 
@@ -206,51 +184,16 @@ _EOL
   fi
 }
 
-function get_jenkins ()
-{
-  if [ -z "$JENKINS_URL" ]; then
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -url)
-          JENKINS_URL="$2"; break ;;
-      esac
-      shift
-    done
-  fi
-  if [ -z "$JENKINS_URL" ]; then
-    echo "Cannot find jenkins url from arguments"
-    return 1
-  fi
-  curl --create-dirs -sSLo jenkins/slave.jar $JENKINS_URL/jnlpJars/slave.jar
-}
-
-function run_default ()
-{
-  run_build && run_test
-}
-
 case "$1" in
   "")
-    set -- run_default
+    echo "Usage: /entrypoint.sh {checkout|test} | <command>"
+    exit 1
     ;;
   checkout)
     set -- run_checkout
     ;;
-  build)
-    shift
-    set -- run_build "$@"
-    ;;
-  dist)
-    shift
-    set -- run_dist "$@"
-    ;;
   test)
     set -- run_test
-    ;;
-  jenkins-slave)
-    shift
-    get_jenkins "$@"
-    set -- java $JAVA_OPTS -cp jenkins/slave.jar hudson.remoting.jnlp.Main -headless "$@"
     ;;
 esac
 
