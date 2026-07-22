@@ -20,6 +20,7 @@ RUN set -x \
                 ncurses-devel cmake ant flex sclo-git212 wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
                 which ccache \
+                perl-core \
         && yum clean all -y \
         && rm -rf /var/cache/yum
 
