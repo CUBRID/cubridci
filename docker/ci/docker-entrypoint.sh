@@ -1,29 +1,39 @@
 #!/bin/bash -e
 
+# Check out a repo at a branch: clone if absent, else fetch+reset+clean.
+# Retry transient network failures and exit non-zero if it never succeeds,
+# then log the resolved branch + commit so the CI log shows what ran.
+function checkout_repo ()
+{
+  local repo=$1
+  local branch=$2
+  local url="https://github.com/CUBRID/$repo.git"
+  local dir="$WORKDIR/$repo"
+  local i ok=
+  for i in 1 2 3 4 5; do
+    if [ -d "$dir/.git" ]; then
+      ( cd "$dir" \
+        && git fetch -q --depth 1 origin "$branch" \
+        && git reset --hard FETCH_HEAD \
+        && git clean -df ) && { ok=1; break; }
+    else
+      git clone -q --depth 1 --branch "$branch" "$url" "$dir" && { ok=1; break; }
+    fi
+    echo "[warn] checkout of $repo ($branch) attempt $i/5 failed; retrying in $((i * 10))s" >&2
+    sleep $((i * 10))
+  done
+  [ -n "$ok" ] || { echo "** ERROR: checkout of $repo ($branch) failed after retries" >&2; exit 1; }
+
+  local head
+  head=$(git -C "$dir" rev-parse --verify HEAD 2>/dev/null) \
+    || { echo "** ERROR: $repo has no valid HEAD after checkout ($branch)" >&2; exit 1; }
+  echo "[checkout] $repo @ $branch -> $head $(git -C "$dir" log -1 --pretty=format:'%s' 2>/dev/null)"
+}
+
 function run_checkout ()
 {
-  if [ ! -d $WORKDIR/cubrid-testtools ]; then
-    git clone -q --depth 1 --branch $BRANCH_TESTTOOLS https://github.com/CUBRID/cubrid-testtools $WORKDIR/cubrid-testtools
-  elif [ -d $WORKDIR/cubrid-testtools/.git ]; then
-    (cd $WORKDIR/cubrid-testtools && \
-     git fetch -q --depth 1 origin $BRANCH_TESTTOOLS && \
-     git reset --hard FETCH_HEAD && \
-     git clean -df)
-  else
-    echo "Cannot find .git from $WORKDIR/cubrid-testtools directory!"
-    return 1
-  fi
-  if [ ! -d $WORKDIR/cubrid-testcases ]; then
-    git clone -q --depth 1 --branch $BRANCH_TESTCASES https://github.com/CUBRID/cubrid-testcases $WORKDIR/cubrid-testcases
-  elif [ -d $WORKDIR/cubrid-testcases/.git ]; then
-    (cd $WORKDIR/cubrid-testcases && \
-     git fetch -q --depth 1 origin $BRANCH_TESTCASES && \
-     git reset --hard FETCH_HEAD && \
-     git clean -df)
-  else
-    echo "Cannot find .git from $WORKDIR/cubrid-testcases directory!"
-    return 1
-  fi
+  checkout_repo cubrid-testtools "$BRANCH_TESTTOOLS"
+  checkout_repo cubrid-testcases "$BRANCH_TESTCASES"
 }
 
 function run_test ()
