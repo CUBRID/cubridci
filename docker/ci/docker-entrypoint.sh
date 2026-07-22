@@ -28,17 +28,42 @@ clone_repository() {
   local repo=$1
   local branch=$2
   local url="https://github.com/CUBRID/$repo.git"
-  
+  local dir="$WORKDIR/$repo"
+
   debug "clone_repository $repo $branch $url" "$LINENO"
-  if [ ! -d "$WORKDIR/$repo" ]; then
-    git -c fetch.parallel=0 -c core.compression=9 clone -q --depth 1 --branch $branch --single-branch --no-tags $url $WORKDIR/$repo
-  elif [ -d "$WORKDIR/$repo" ]; then
-    ( cd $WORKDIR/$repo && git fetch --depth 1 origin $branch && git reset --hard origin/$branch && git clean -df )
-  else
-    debug "Cannot find .git from $WORKDIR/$repo directory!" "$LINENO"
-    exit 1
-  fi
-  if [ "$DEBUG" = true ]; then debug "$(ls -la $WORKDIR/$repo)" "$LINENO"; fi
+
+  # Bring the pre-seeded checkout (a blob:none partial + sparse clone that the pod
+  # overlay-mounts) to $branch. reset --hard lazily fetches the missing blobs from
+  # the promisor remote; under the 50-way shell fan-out GitHub can transiently
+  # throttle that fetch (seen as "Empty reply from server" / "Authentication
+  # failed" on a few nodes). Retry with backoff, and if it still fails, exit
+  # non-zero so we never run tests on an incomplete working tree.
+  local i ok=
+  for i in 1 2 3 4 5; do
+    if [ -d "$dir/.git" ]; then
+      ( cd "$dir" \
+        && git -c fetch.parallel=0 fetch --depth 1 --no-tags origin "$branch" \
+        && git reset --hard "origin/$branch" \
+        && git clean -df ) && { ok=1; break; }
+    else
+      git -c fetch.parallel=0 -c core.compression=9 clone -q --depth 1 --branch "$branch" \
+          --single-branch --no-tags "$url" "$dir" && { ok=1; break; }
+    fi
+    echo "[warn] checkout of $repo ($branch) attempt $i/5 failed; retrying in $((i * 10))s" >&2
+    sleep $((i * 10))
+  done
+  [ -n "$ok" ] || { echo "** ERROR: checkout of $repo ($branch) failed after retries" >&2; exit 1; }
+
+  # Sanity check: a completed clone/reset leaves HEAD at the branch tip.
+  local head
+  head=$(git -C "$dir" rev-parse --verify HEAD 2>/dev/null) \
+    || { echo "** ERROR: $repo has no valid HEAD after checkout ($branch)" >&2; exit 1; }
+
+  # Always report what was actually checked out (branch + commit + subject).
+  echo "[checkout] $repo @ $branch -> $head $(git -C "$dir" log -1 --pretty=format:'%s' 2>/dev/null)"
+
+  if [ "$DEBUG" = true ]; then debug "$(ls -la "$dir")" "$LINENO"; fi
+  return 0
 }
 
 # Git configuration and repository cloning
