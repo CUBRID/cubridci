@@ -37,6 +37,17 @@ RUN localedef -f UTF-8 -i ko_KR ko_KR.UTF-8 \
  && localedef -f UTF-8 -i en_US en_US.UTF-8
 ENV LANG=en_US.UTF-8
 
+# Pre-install the CircleCI tests plugin at the exact path the task agent expects,
+# so `circleci tests run` reuses it instead of downloading it from S3 during the
+# job (that download times out under 50-way fan-out on a slow WAN and fails the
+# split step). If CircleCI bumps the plugin version, the agent ignores this stale
+# cache and falls back to downloading, i.e. the behavior before this change.
+ARG TESTS_PLUGIN_VERSION=1.0.13141-073b78b
+RUN mkdir -p /tmp/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64 && \
+    wget -q -O /tmp/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64/circleci-tests-plugin-cli \
+        "https://circleci-binary-releases.s3.amazonaws.com/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64/circleci-tests-plugin-cli" && \
+    chmod 755 /tmp/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64/circleci-tests-plugin-cli
+
 #circleci env
 ENV TEST_REPORT=/tmp/tests
 ENV BASELINE none
