@@ -42,10 +42,16 @@ ENV LANG=en_US.UTF-8
 # job (that download times out under 50-way fan-out on a slow WAN and fails the
 # split step). If CircleCI bumps the plugin version, the agent ignores this stale
 # cache and falls back to downloading, i.e. the behavior before this change.
+# The S3 object is stored with Content-Encoding: gzip, so wget saves gzip bytes;
+# decompress before install and pin the sha256 the agent verifies at runtime —
+# a wrong hash must fail the image build, not the CI job.
 ARG TESTS_PLUGIN_VERSION=1.0.13141-073b78b
+ARG TESTS_PLUGIN_SHA256=f335d9672fee958006123ee91ba03a99f30110c6c66db11fc57b845a28414848
 RUN mkdir -p /tmp/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64 && \
-    wget -q -O /tmp/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64/circleci-tests-plugin-cli \
-        "https://circleci-binary-releases.s3.amazonaws.com/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64/circleci-tests-plugin-cli" && \
+    wget -q -O - \
+        "https://circleci-binary-releases.s3.amazonaws.com/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64/circleci-tests-plugin-cli" \
+        | gzip -d > /tmp/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64/circleci-tests-plugin-cli && \
+    echo "${TESTS_PLUGIN_SHA256}  /tmp/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64/circleci-tests-plugin-cli" | sha256sum -c && \
     chmod 755 /tmp/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64/circleci-tests-plugin-cli
 
 #circleci env
