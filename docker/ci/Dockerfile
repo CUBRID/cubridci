@@ -45,8 +45,8 @@ ENV LANG=en_US.UTF-8
 # The S3 object is stored with Content-Encoding: gzip, so wget saves gzip bytes;
 # decompress before install and pin the sha256 the agent verifies at runtime —
 # a wrong hash must fail the image build, not the CI job.
-ARG TESTS_PLUGIN_VERSION=1.0.13141-073b78b
-ARG TESTS_PLUGIN_SHA256=f335d9672fee958006123ee91ba03a99f30110c6c66db11fc57b845a28414848
+ARG TESTS_PLUGIN_VERSION=1.0.13506-242eb49
+ARG TESTS_PLUGIN_SHA256=d9d5aeb58f6e54b3990c9dae079d7812de555d33980d40eacb71061c3b6ec8cf
 RUN mkdir -p /tmp/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64 && \
     wget -q -O - \
         "https://circleci-binary-releases.s3.amazonaws.com/circleci-tests-plugin-cli/${TESTS_PLUGIN_VERSION}/linux/amd64/circleci-tests-plugin-cli" \
