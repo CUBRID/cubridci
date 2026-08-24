@@ -150,6 +150,8 @@ function judge_status ()
   local status_log="$XML_SRC/test_status.data"
   [ -f "$status_log" ] \
     || { echo "** ERROR: test status file not found: $status_log" >&2; return 1; }
+  [ "$status_log" -nt "$RUN_STAMP" ] \
+    || { echo "** ERROR: test status file is from an earlier run: $status_log" >&2; return 1; }
 
   # A missing or non-numeric count must fail, not pass: [ ... -gt 0 ] errors
   # on garbage and would fall through to the success branch.
