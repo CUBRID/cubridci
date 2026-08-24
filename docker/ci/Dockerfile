@@ -2,8 +2,7 @@ FROM rockylinux/rockylinux:8.10
 
 LABEL Description="This is a test environment image for CUBRID (rocky8, CTP runtime). CUBRID must be injected from outside."
 
-# lcov comes from EPEL. glibc-locale-source is only needed to run localedef, so
-# drop it in the same layer once the locales are compiled.
+# lcov needs EPEL; glibc-locale-source only feeds localedef, so drop it in the same layer.
 RUN set -ex \
         && dnf install -y epel-release \
         && dnf install -y --setopt=tsflags=nodocs --setopt=install_weak_deps=False \

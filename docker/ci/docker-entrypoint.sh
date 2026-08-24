@@ -1,5 +1,4 @@
 #!/bin/bash -le
-# Pipelines below must not mask a non-zero exit code.
 set -o pipefail
 
 function usage ()
@@ -39,8 +38,7 @@ function resolve_category ()
   esac
 }
 
-# A token is only needed for the private testcase repositories, and only while
-# cloning. Drop it on exit so the test step never sees a git credential.
+# Drop the token on exit so the test step never sees a git credential.
 function setup_token ()
 {
   case "$TC_REPO" in
@@ -56,8 +54,6 @@ function setup_token ()
   trap 'git config --global --unset-all "$TOKEN_CONFIG_KEY" 2>/dev/null || true' EXIT
 }
 
-# Clone if absent, else fetch+reset+clean. Retry transient network failures and
-# exit non-zero if it never succeeds, then log the resolved branch + commit.
 function checkout_repo ()
 {
   local repo=$1
@@ -67,8 +63,7 @@ function checkout_repo ()
   local i ok=
   for i in 1 2 3 4 5; do
     if [ -d "$dir/.git" ]; then
-      # The clone below is single-branch: fetching another $branch on a reused
-      # workspace updates only FETCH_HEAD, never origin/$branch.
+      # Single-branch clone: a later fetch updates only FETCH_HEAD, never origin/$branch.
       ( cd "$dir" \
         && git -c fetch.parallel=0 fetch --depth 1 --no-tags origin "$branch" \
         && git reset --hard FETCH_HEAD \
@@ -95,9 +90,7 @@ function run_checkout ()
   checkout_repo "$TC_REPO" "$BRANCH_TESTCASES"
 }
 
-# The sql runner keeps one result directory per run, so a container that runs
-# 'test' twice holds several. $RUN_STAMP scopes both reporting and judging to
-# the run that just finished.
+# $RUN_STAMP keeps reporting and judging off results left by earlier runs.
 function collect_xml ()
 {
   mkdir -p "$TEST_REPORT"
@@ -114,9 +107,7 @@ function collect_xml ()
   fi
 }
 
-# The sql runner records per-case verdicts in summary_info. Its JUnit XML is not
-# used to judge: ConsoleBO wraps JunitXmlWriter in a Throwable guard, so a silent
-# XML failure would read as "zero failures".
+# CTP swallows JUnit-XML writer failures, so the XML must not judge results.
 function judge_sqlresult ()
 {
   local summary_infos
@@ -153,8 +144,7 @@ function judge_status ()
   [ "$status_log" -nt "$RUN_STAMP" ] \
     || { echo "** ERROR: test status file is from an earlier run: $status_log" >&2; return 1; }
 
-  # A missing or non-numeric count must fail, not pass: [ ... -gt 0 ] errors
-  # on garbage and would fall through to the success branch.
+  # Without this guard a garbage count errors in [ -gt ] and falls through to "passed".
   local nfailed
   nfailed=$(awk -F'=' '/^total_fail_case_count/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$status_log")
   case "$nfailed" in
