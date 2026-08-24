@@ -1,6 +1,6 @@
 FROM rockylinux/rockylinux:8.10
 
-LABEL Description="This is a build and test environment image for CUBRID"
+LABEL Description="This is a build environment image for CUBRID"
 
 RUN dnf install -y dnf-plugins-core && \
     dnf config-manager --set-enabled powertools || \
@@ -51,10 +51,6 @@ ENV CUBRID $WORKDIR/CUBRID
 ENV CUBRID_DATABASES $CUBRID/databases
 ENV PATH $JAVA_HOME/bin:$CUBRID/bin:$PATH
 ENV LD_LIBRARY_PATH $CUBRID/lib:$CUBRID/cci/lib
-ENV TEST_SUITE medium:sql
-ENV TEST_REPORT /tmp/tests
-ENV BRANCH_TESTTOOLS develop
-ENV BRANCH_TESTCASES develop
 
 # set timezone for test
 ENV TZ Asia/Seoul
