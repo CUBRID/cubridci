@@ -1,4 +1,6 @@
 #!/bin/bash -le
+# The log filter below would otherwise mask build.sh's exit code.
+set -o pipefail
 
 function run_build ()
 {
@@ -11,10 +13,12 @@ function run_build ()
     return 1
   fi
 
-  (cd $CUBRID_SRCDIR \
-    && ./build.sh -p $CUBRID $@ clean build) | tee build.log | grep -e '\[[ 0-9]\+%\]' -e ' error: ' -e '\[[0-9]\+\/[0-9]\+\]' || { tail -500 build.log; false; }
-
-  grep "Building failed" $CUBRID_SRCDIR/build.log && exit 1 || { true; }  
+  if ! (cd $CUBRID_SRCDIR \
+    && ./build.sh -p $CUBRID $@ clean build) 2>&1 | tee build.log | { grep -e '\[[ 0-9]\+%\]' -e ' error: ' -e '\[[0-9]\+\/[0-9]\+\]' || true; }
+  then
+    tail -500 build.log
+    return 1
+  fi
 }
 
 function run_dist ()
