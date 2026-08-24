@@ -26,7 +26,7 @@ function resolve_category ()
       CTP_CONF=conf/medium_dev.conf       REPORT_STYLE=sqlresult ;;
     shell)
       TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
-      CTP_CONF=conf/shell_ci.conf         REPORT_STYLE=ctpxml ;;
+      CTP_CONF=conf/shell_ci.conf         REPORT_STYLE=status ;;
     "")
       echo "** ERROR: no category given (\$TEST_SUITE is empty)" >&2; usage; exit 1 ;;
     *)
@@ -35,7 +35,7 @@ function resolve_category ()
 
   case "$REPORT_STYLE" in
     sqlresult) XML_SRC="$CTP_HOME/sql/result" ;;
-    ctpxml)    XML_SRC="$CTP_HOME/result/$CTP_CMD/current_runtime_logs" ;;
+    status)    XML_SRC="$CTP_HOME/result/$CTP_CMD/current_runtime_logs" ;;
   esac
 }
 
@@ -145,7 +145,7 @@ function judge_sqlresult ()
   echo "** All Tests are passed"
 }
 
-function judge_ctpxml ()
+function judge_status ()
 {
   local status_log="$XML_SRC/test_status.data"
   [ -f "$status_log" ] \
