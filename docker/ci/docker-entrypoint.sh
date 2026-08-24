@@ -67,9 +67,11 @@ function checkout_repo ()
   local i ok=
   for i in 1 2 3 4 5; do
     if [ -d "$dir/.git" ]; then
+      # The clone below is single-branch: fetching another $branch on a reused
+      # workspace updates only FETCH_HEAD, never origin/$branch.
       ( cd "$dir" \
         && git -c fetch.parallel=0 fetch --depth 1 --no-tags origin "$branch" \
-        && git reset --hard "origin/$branch" \
+        && git reset --hard FETCH_HEAD \
         && git clean -df ) && { ok=1; break; }
     else
       git -c fetch.parallel=0 -c core.compression=9 clone -q --depth 1 --branch "$branch" \
