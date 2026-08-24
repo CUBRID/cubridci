@@ -151,9 +151,15 @@ function judge_ctpxml ()
   [ -f "$status_log" ] \
     || { echo "** ERROR: test status file not found: $status_log" >&2; return 1; }
 
+  # A missing or non-numeric count must fail, not pass: [ ... -gt 0 ] errors
+  # on garbage and would fall through to the success branch.
   local nfailed
-  nfailed=$(awk -F'=' '/^total_fail_case_count/ {print $2; exit}' "$status_log")
-  nfailed=${nfailed:-0}
+  nfailed=$(awk -F'=' '/^total_fail_case_count/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$status_log")
+  case "$nfailed" in
+    ''|*[!0-9]*)
+      echo "** ERROR: no readable total_fail_case_count in $status_log" >&2
+      return 1 ;;
+  esac
 
   if [ "$nfailed" -gt 0 ]; then
     echo "** $nfailed cases are failed."
