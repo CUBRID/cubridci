@@ -9,7 +9,7 @@ Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh <command> [<args>...]
 
 <category> overrides $TEST_SUITE. One category per run.
-Supported categories: sql, medium, shell, isolation
+Supported categories: sql, medium, shell, isolation, sql_by_cci
 EOF
 }
 
@@ -29,6 +29,9 @@ function resolve_category ()
     isolation)
       TC_REPO=cubrid-testcases            CTP_CMD=isolation
       CTP_CONF=conf/isolation.conf        REPORT_STYLE=status ;;
+    sql_by_cci)
+      TC_REPO=cubrid-testcases            CTP_CMD=sql_by_cci
+      CTP_CONF=conf/sql_by_cci.conf       REPORT_STYLE=cciresult ;;
     "")
       echo "** ERROR: no category given (\$TEST_SUITE is empty)" >&2; usage; exit 1 ;;
     *)
@@ -37,6 +40,7 @@ function resolve_category ()
 
   case "$REPORT_STYLE" in
     sqlresult) XML_SRC="$CTP_HOME/sql/result" ;;
+    cciresult) XML_SRC="$CTP_HOME/result/$CTP_CMD" ;;
     status)    XML_SRC="$CTP_HOME/result/$CTP_CMD/current_runtime_logs" ;;
   esac
 }
@@ -133,6 +137,35 @@ function judge_sqlresult ()
     echo "** All failed Testcases are listed below:"
     echo "$failed_list" | sed "s|.*$WORKDIR/$TC_REPO/| - |"
     echo "** See the JUnit report in $TEST_REPORT for per-case queries, diffs and source links."
+    return 1
+  fi
+
+  echo "** All Tests are passed"
+}
+
+# cci marks failures ":NOK:" in summary.info; its summary_info has only Num_fail, so judge_sqlresult() sees nothing.
+function judge_cciresult ()
+{
+  local summaries
+  summaries=$(find "$XML_SRC" -type f -name summary.info -newer "$RUN_STAMP" 2>/dev/null || true)
+  if [ -z "$summaries" ]; then
+    echo "** ERROR: no summary.info under $XML_SRC; nothing was tested" >&2
+    return 1
+  fi
+
+  local failed_list nfailed
+  failed_list=$(echo "$summaries" | xargs -n1 grep -h ':NOK:' \
+                  | sed 's/^TestCase:[[:space:]]*//; s/[[:space:]]*:NOK:.*//' || true)
+  if [ -z "$failed_list" ]; then
+    nfailed=0
+  else
+    nfailed=$(echo "$failed_list" | wc -l)
+  fi
+
+  if [ "$nfailed" -gt 0 ]; then
+    echo "** There are $nfailed failed Testcases on this test."
+    echo "** All failed Testcases are listed below:"
+    echo "$failed_list" | sed 's|^| - |'
     return 1
   fi
 
