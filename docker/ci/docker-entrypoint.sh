@@ -1,8 +1,63 @@
-#!/bin/bash -e
+#!/bin/bash -le
+# Pipelines below must not mask a non-zero exit code.
+set -o pipefail
 
-# Check out a repo at a branch: clone if absent, else fetch+reset+clean.
-# Retry transient network failures and exit non-zero if it never succeeds,
-# then log the resolved branch + commit so the CI log shows what ran.
+function usage ()
+{
+  cat >&2 <<'EOF'
+Usage: /entrypoint.sh checkout [<category>]
+       /entrypoint.sh test [<category>]
+       /entrypoint.sh <command> [<args>...]
+
+<category> overrides $TEST_SUITE. One category per run.
+Supported categories: sql, medium, shell
+EOF
+}
+
+# Every category attribute lives here; other functions only read these variables.
+function resolve_category ()
+{
+  case "$TEST_SUITE" in
+    sql)
+      TC_REPO=cubrid-testcases            CTP_CMD=sql
+      CTP_CONF=conf/sql.conf              REPORT_STYLE=sqlresult ;;
+    medium)
+      TC_REPO=cubrid-testcases            CTP_CMD=medium
+      CTP_CONF=conf/medium_dev.conf       REPORT_STYLE=sqlresult ;;
+    shell)
+      TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
+      CTP_CONF=conf/shell_ci.conf         REPORT_STYLE=ctpxml ;;
+    "")
+      echo "** ERROR: no category given (\$TEST_SUITE is empty)" >&2; usage; exit 1 ;;
+    *)
+      echo "** ERROR: unknown category '$TEST_SUITE'" >&2; usage; exit 1 ;;
+  esac
+
+  case "$REPORT_STYLE" in
+    sqlresult) XML_SRC="$CTP_HOME/sql/result" ;;
+    ctpxml)    XML_SRC="$CTP_HOME/result/$CTP_CMD/current_runtime_logs" ;;
+  esac
+}
+
+# A token is only needed for the private testcase repositories, and only while
+# cloning. Drop it on exit so the test step never sees a git credential.
+function setup_token ()
+{
+  case "$TC_REPO" in
+    *-private|*-private-ex) ;;
+    *) return 0 ;;
+  esac
+
+  [ -n "$GHI_TOKEN" ] \
+    || { echo "** ERROR: GHI_TOKEN is required to check out $TC_REPO" >&2; exit 1; }
+
+  TOKEN_CONFIG_KEY="url.https://x-access-token:${GHI_TOKEN}@github.com/.insteadof"
+  git config --global "$TOKEN_CONFIG_KEY" https://github.com/
+  trap 'git config --global --unset-all "$TOKEN_CONFIG_KEY" 2>/dev/null || true' EXIT
+}
+
+# Clone if absent, else fetch+reset+clean. Retry transient network failures and
+# exit non-zero if it never succeeds, then log the resolved branch + commit.
 function checkout_repo ()
 {
   local repo=$1
@@ -13,11 +68,12 @@ function checkout_repo ()
   for i in 1 2 3 4 5; do
     if [ -d "$dir/.git" ]; then
       ( cd "$dir" \
-        && git fetch -q --depth 1 origin "$branch" \
-        && git reset --hard FETCH_HEAD \
+        && git -c fetch.parallel=0 fetch --depth 1 --no-tags origin "$branch" \
+        && git reset --hard "origin/$branch" \
         && git clean -df ) && { ok=1; break; }
     else
-      git clone -q --depth 1 --branch "$branch" "$url" "$dir" && { ok=1; break; }
+      git -c fetch.parallel=0 -c core.compression=9 clone -q --depth 1 --branch "$branch" \
+          --single-branch --no-tags "$url" "$dir" && { ok=1; break; }
     fi
     echo "[warn] checkout of $repo ($branch) attempt $i/5 failed; retrying in $((i * 10))s" >&2
     sleep $((i * 10))
@@ -32,183 +88,124 @@ function checkout_repo ()
 
 function run_checkout ()
 {
+  setup_token
   checkout_repo cubrid-testtools "$BRANCH_TESTTOOLS"
-  checkout_repo cubrid-testcases "$BRANCH_TESTCASES"
+  checkout_repo "$TC_REPO" "$BRANCH_TESTCASES"
 }
 
-function run_test ()
+# The sql runner keeps one result directory per run, so a container that runs
+# 'test' twice holds several. $RUN_STAMP scopes both reporting and judging to
+# the run that just finished.
+function collect_xml ()
 {
-  if [ -z "$CIRCLECI" ]; then
-    run_checkout
+  mkdir -p "$TEST_REPORT"
+
+  local n=0 x
+  while IFS= read -r x; do
+    cp -f "$x" "$TEST_REPORT/" && n=$((n + 1))
+  done < <(find -L "$XML_SRC" -type f -name '*.xml' ! -name 'summary.xml' -newer "$RUN_STAMP" 2>/dev/null)
+
+  if [ "$n" -eq 0 ]; then
+    echo "[warn] no JUnit XML found under $XML_SRC" >&2
   else
-    echo "[info] Skipping run_checkout in run_test on CircleCI"
-  fi
-
-  if [ ! -x "$CUBRID/bin/cubrid_rel" ]; then
-    echo "[error] CUBRID is not installed at $CUBRID. Install before invoking 'test'."
-    exit 1
-  fi
-
-  for t in ${TEST_SUITE//:/ }; do
-    case "$t" in
-      medium)
-        # CUBRIDQA-1093/CUBRID 11.x: medium_dev.conf has create_table_reuseoid=no baked in.
-        (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh medium -c CTP/conf/medium_dev.conf)
-        ;;
-      *)
-        (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
-        ;;
-    esac
-  done
-
-  if [[ ":$TEST_SUITE:" =~ :(medium|sql): ]]; then
-    report_test -x $TEST_REPORT $WORKDIR/cubrid-testtools/CTP/sql/result
+    echo "[report] collected $n JUnit XML file(s) into $TEST_REPORT"
   fi
 }
 
-function report_test ()
+# The sql runner records per-case verdicts in summary_info. Its JUnit XML is not
+# used to judge: ConsoleBO wraps JunitXmlWriter in a Throwable guard, so a silent
+# XML failure would read as "zero failures".
+function judge_sqlresult ()
 {
-  local ncount=0
-  local max_print_failed=50
-
-  while getopts "x:n:" opt; do
-    case $opt in
-      x)
-        xml_output="$OPTARG"
-        [ ! -d "$xml_output" ] && mkdir -p "$xml_output"
-        ;;
-      n)
-        max_print_failed=$OPTARG
-        ;;
-      *)
-        ;;
-    esac
-  done
-  shift $(($OPTIND - 1))
-
-  if [ $# -lt 1 ]; then
-    return 1
-  fi
-  result_path=$1
-  if [ ! -d $result_path ]; then
-    echo "Result path '$result_path' does not exist."
+  local summary_infos
+  summary_infos=$(find "$XML_SRC" -type f -name summary_info -newer "$RUN_STAMP" 2>/dev/null || true)
+  if [ -z "$summary_infos" ]; then
+    echo "** ERROR: no summary_info under $XML_SRC; nothing was tested" >&2
     return 1
   fi
 
-  #In case of testing nothing due to an error like failure to load a library.
-  if [ `find $result_path -type f -name summary_info | wc -l` -eq 0 ]; then
-     echo "Nothing is tested because of an error."
-     exit 1
-  fi
-
-
-  failed_list=$(find $result_path -name summary_info | xargs -n1 grep -hw nok | awk -F: '{print $1}')
+  local failed_list nfailed
+  failed_list=$(echo "$summary_infos" | xargs -n1 grep -hw nok | awk -F: '{print $1}' || true)
   if [ -z "$failed_list" ]; then
     nfailed=0
   else
     nfailed=$(echo "$failed_list" | wc -l)
   fi
-  echo ""
-  if [ $max_print_failed -ne 0 -a $nfailed -gt $max_print_failed ]; then
-    echo "** There are too many failed ($nfailed) Testcases on this test."
-    echo "** It will print details of only $max_print_failed failed Testcases."
-  elif [ $nfailed -gt 0 ]; then
-    echo "** There are $nfailed failed Testcases on this test."
-    echo "** It will print details of $nfailed failed Testcases."
-  fi
-  echo ""
 
-  testcases_root_dir="$WORKDIR/cubrid-testcases"
-  testcases_remote_url=$(cd $testcases_root_dir && git config --get remote.origin.url)
-  testcases_hash=$(cd $testcases_root_dir && git rev-parse HEAD)
-  testcases_base_url="${testcases_remote_url%.git}/blob/$testcases_hash"
-
-  for f in $failed_list; do
-    casefile=$f
-    answerfile=${f/\/cases\//\/answers\/}
-    answerfile=${answerfile/%.sql/.answer}
-    resultfile=${f/%.sql/.result}
-    reportfile=${f/%.sql/.report} && echo "<failure message='unexpected result'><![CDATA[" > $reportfile
-
-    ncount=$((ncount+1))
-    printf "%115s\n" "($ncount/$nfailed)" | tr ' ' '-'
-    testcases_case_url="$testcases_base_url/${casefile##*$testcases_root_dir/}"
-    testcases_answer_url="$testcases_base_url/${answerfile##*$testcases_root_dir/}"
-    echo "** Testcase : ${casefile##*$testcases_root_dir/} - $testcases_case_url" | tee -a $reportfile
-    echo "** Expected : ${answerfile##*$testcases_root_dir/} - $testcases_answer_url" | tee -a $reportfile
-    echo "** Difference between Expected(-) and Actual(+) results:"
-    diff -ut $answerfile $resultfile | tee -a $reportfile
-    echo "]]></failure>" >> $reportfile
-
-    if [ $max_print_failed -ne 0 -a $ncount -ge $max_print_failed ]; then
-      break
-    fi
-  done
-
-  if [ $max_print_failed -ne 0 -a $nfailed -gt $max_print_failed ]; then
-    printf "%115s\n" | tr ' ' '-'
-    echo "** More than $max_print_failed failed Testcases are omitted. (There are $nfailed failed Testcases on this test)"
-  fi
-  echo ""
-
-  if [ -n "$xml_output" ]; then
-    summary_xml_list=$(find $result_path -name summary.xml)
-    for f in $summary_xml_list; do
-      target=$(dirname ${f##*schedule_})
-      target=${target%_[0-9]*_*}
-      build_mode=$(cubrid_rel | grep -oe 'release\|debug')
-      cat << "_EOL" | xsltproc -o "$xml_output/${target}.xml" --stringparam target "${target}_${build_mode}" --stringparam casedir "${testcases_root_dir}/" - $f || true
-<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
- <xsl:output indent="yes" cdata-section-elements="failure"/>
- <xsl:template match="results">
-   <testsuites>
-     <testsuite name="{$target}" tests="{count(scenario)}" failures="{count(scenario/result[contains(.,'fail')])}">
-       <xsl:apply-templates select="scenario"/>
-     </testsuite>
-   </testsuites>
- </xsl:template>
- <xsl:template match="scenario">
-   <testcase classname="{$target}" name="{case}" file="cubrid-testcases/{case}" time="{elapsetime div 1000}">
-      <xsl:if test="result='fail'">
-        <xsl:variable name="testcase" select="case"/>
-        <xsl:variable name="report" select="concat($casedir, substring-before($testcase, '.sql'), '.report')"/>
-        <xsl:copy-of select="document($report)"/>
-      </xsl:if>
-   </testcase>
- </xsl:template>
-</xsl:stylesheet>
-_EOL
-    done
-  fi
-
-  if [ $nfailed -gt 0 ]; then
+  if [ "$nfailed" -gt 0 ]; then
     echo "** There are $nfailed failed Testcases on this test."
     echo "** All failed Testcases are listed below:"
-    for f in $failed_list ; do
-      echo " - ${f##*$testcases_root_dir/}"
-    done
-    echo "** $nfailed cases are failed."
-    exit $nfailed
-  else
-    echo "** All Tests are passed"
+    echo "$failed_list" | sed "s|.*$WORKDIR/$TC_REPO/| - |"
+    echo "** See the JUnit report in $TEST_REPORT for per-case queries, diffs and source links."
+    return 1
   fi
+
+  echo "** All Tests are passed"
+}
+
+function judge_ctpxml ()
+{
+  local status_log="$XML_SRC/test_status.data"
+  [ -f "$status_log" ] \
+    || { echo "** ERROR: test status file not found: $status_log" >&2; return 1; }
+
+  local nfailed
+  nfailed=$(awk -F'=' '/^total_fail_case_count/ {print $2; exit}' "$status_log")
+  nfailed=${nfailed:-0}
+
+  if [ "$nfailed" -gt 0 ]; then
+    echo "** $nfailed cases are failed."
+    return 1
+  fi
+
+  echo "** All Tests are passed"
+}
+
+function run_test ()
+{
+  [ -x "$CUBRID/bin/cubrid_rel" ] \
+    || { echo "** ERROR: no CUBRID at $CUBRID; inject a build before running 'test'" >&2; exit 1; }
+  [ -d "$CTP_HOME" ] \
+    || { echo "** ERROR: no CTP at $CTP_HOME; run 'checkout' first" >&2; exit 1; }
+  [ -d "$WORKDIR/$TC_REPO" ] \
+    || { echo "** ERROR: no testcases at $WORKDIR/$TC_REPO; run 'checkout' first" >&2; exit 1; }
+
+  RUN_STAMP=$(mktemp)
+  trap 'rm -f "$RUN_STAMP"' EXIT
+
+  # shell cases reach the server over ssh (shell_utils.sh builds "ssh -p ...").
+  pgrep -x sshd >/dev/null || sudo /usr/sbin/sshd
+  ulimit -c 10485760
+
+  local ctp_ret=0
+  ( cd "$WORKDIR" && HOME="$WORKDIR" "$CTP_HOME/bin/ctp.sh" "$CTP_CMD" -c "$CTP_HOME/$CTP_CONF" ) \
+    || ctp_ret=$?
+
+  collect_xml
+
+  if [ "$ctp_ret" -ne 0 ]; then
+    echo "** ERROR: CTP exited with $ctp_ret" >&2
+    exit 1
+  fi
+
+  if "judge_${REPORT_STYLE}"; then exit 0; else exit 1; fi
 }
 
 case "$1" in
-  "")
-    echo "Usage: /entrypoint.sh {checkout|test} | <command>"
-    exit 1
-    ;;
   checkout)
-    set -- run_checkout
+    shift; if [ -n "$1" ]; then TEST_SUITE=$1; fi
+    resolve_category
+    run_checkout
     ;;
   test)
-    set -- run_test
+    shift; if [ -n "$1" ]; then TEST_SUITE=$1; fi
+    resolve_category
+    run_test
+    ;;
+  "")
+    usage; exit 1
+    ;;
+  *)
+    exec "$@"
     ;;
 esac
-
-if [ -n "$(type -t $1)" -a "$(type -t $1)" = function ]; then
-  eval "$@"
-else
-  exec "$@"
-fi
