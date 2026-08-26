@@ -9,7 +9,7 @@ Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh <command> [<args>...]
 
 <category> overrides $TEST_SUITE. One category per run.
-Supported categories: sql, medium, shell, isolation, sql_by_cci
+Supported categories: sql, medium, shell, isolation, sql_by_cci, jdbc
 EOF
 }
 
@@ -32,6 +32,9 @@ function resolve_category ()
     sql_by_cci)
       TC_REPO=cubrid-testcases            CTP_CMD=sql_by_cci
       CTP_CONF=conf/sql_by_cci.conf       REPORT_STYLE=cciresult ;;
+    jdbc)
+      TC_REPO=cubrid-testcases-private    CTP_CMD=jdbc
+      CTP_CONF=conf/jdbc.conf             REPORT_STYLE=status ;;
     "")
       echo "** ERROR: no category given (\$TEST_SUITE is empty)" >&2; usage; exit 1 ;;
     *)
