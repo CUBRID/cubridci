@@ -6,10 +6,18 @@ function usage ()
   cat >&2 <<'EOF'
 Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh test [<category>]
+       /entrypoint.sh node
        /entrypoint.sh <command> [<args>...]
 
 <category> overrides $TEST_SUITE. One category per run.
-Supported categories: sql, medium, shell, isolation, sql_by_cci, jdbc
+Supported categories: sql, medium, shell, isolation, sql_by_cci, jdbc, ha_repl
+
+'node' prepares this container as a CTP node and waits. Multi-node categories
+need it on every host the controller does not run on. Required env:
+  HA_NODE_PASSWORD  password of the node account ($NODE_USER)
+'test ha_repl' also reads:
+  HA_SLAVE_HOST     hostname of the slave node
+  HA_SCENARIO       scenario path (default: $WORKDIR/cubrid-testcases/sql)
 EOF
 }
 
@@ -35,6 +43,10 @@ function resolve_category ()
     jdbc)
       TC_REPO=cubrid-testcases-private    CTP_CMD=jdbc
       CTP_CONF=conf/jdbc.conf             REPORT_STYLE=status ;;
+    ha_repl)
+      TC_REPO=cubrid-testcases            CTP_CMD=ha_repl
+      CTP_CONF=conf/ha_repl_ci.conf       REPORT_STYLE=status
+      HA_TOPOLOGY=1 ;;
     "")
       echo "** ERROR: no category given (\$TEST_SUITE is empty)" >&2; usage; exit 1 ;;
     *)
@@ -98,6 +110,57 @@ function run_checkout ()
   setup_token
   checkout_repo cubrid-testtools "$BRANCH_TESTTOOLS"
   checkout_repo "$TC_REPO" "$BRANCH_TESTCASES"
+}
+
+# CTP reaches nodes with jsch ChannelExec, a non-login shell that inherits none of
+# Docker's ENV, and it authenticates by password only.
+function prepare_node ()
+{
+  [ -x "$CUBRID/bin/cubrid_rel" ] \
+    || { echo "** ERROR: no CUBRID at $CUBRID; inject a build before 'node'" >&2; exit 1; }
+  [ -d "$CTP_HOME" ] \
+    || { echo "** ERROR: no CTP at $CTP_HOME; run 'checkout' first" >&2; exit 1; }
+  [ -n "$HA_NODE_PASSWORD" ] \
+    || { echo "** ERROR: HA_NODE_PASSWORD is required to set up the node account" >&2; exit 1; }
+
+  echo "$NODE_USER:$HA_NODE_PASSWORD" | chpasswd
+  chown -R "$NODE_USER" "$CUBRID" "$WORKDIR/cubrid-testtools"
+
+  local v
+  for v in HOME CUBRID CUBRID_DATABASES CTP_HOME init_path JAVA_HOME \
+           LD_LIBRARY_PATH SHLIB_PATH LIBPATH PATH LANG TZ; do
+    echo "$v=${!v}"
+  done > /etc/environment
+
+  pgrep -x sshd >/dev/null || /usr/sbin/sshd
+  echo "[node] $NODE_USER@$(hostname) ready"
+}
+
+# Without at least one env.<id>.{cubrid,ha,broker*} key CTP skips its whole node
+# configuration step, leaving cubrid_ha.conf empty and ha_mode off. The exclude list is
+# the one the nightly regression uses, so both agree on which cases are known to fail.
+function write_ha_conf ()
+{
+  [ -n "$HA_SLAVE_HOST" ] \
+    || { echo "** ERROR: HA_SLAVE_HOST is required for $TEST_SUITE" >&2; exit 1; }
+
+  cat > "$CTP_HOME/$CTP_CONF" <<EOF
+default.testdb=xdb
+default.ssh.pwd=$HA_NODE_PASSWORD
+default.ssh.port=22
+env.ha1.master.ssh.host=$(hostname)
+env.ha1.master.ssh.user=$NODE_USER
+env.ha1.slave.ssh.host=$HA_SLAVE_HOST
+env.ha1.slave.ssh.user=$NODE_USER
+env.ha1.cubrid.cubrid_port_id=1727
+env.ha1.ha.ha_port_id=58091
+env.ha1.broker1.SERVICE=OFF
+env.ha1.broker2.APPL_SERVER_SHM_ID=31091
+env.ha1.broker2.BROKER_PORT=31091
+scenario=${HA_SCENARIO:-$WORKDIR/$TC_REPO/sql}
+testcase_exclude_from_file=$WORKDIR/$TC_REPO/sql/config/daily_regression_test_exclude_list_ha_repl.conf
+EOF
+  echo "[conf] $CTP_HOME/$CTP_CONF -> master $(hostname), slave $HA_SLAVE_HOST"
 }
 
 # $RUN_STAMP keeps reporting and judging off results left by earlier runs.
@@ -184,13 +247,25 @@ function judge_status ()
     || { echo "** ERROR: test status file is from an earlier run: $status_log" >&2; return 1; }
 
   # Without this guard a garbage count errors in [ -gt ] and falls through to "passed".
-  local nfailed
+  local nfailed nexec
   nfailed=$(awk -F'=' '/^total_fail_case_count/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$status_log")
   case "$nfailed" in
     ''|*[!0-9]*)
       echo "** ERROR: no readable total_fail_case_count in $status_log" >&2
       return 1 ;;
   esac
+
+  # A run that never got a case started leaves every counter at 0, which reads as a pass.
+  nexec=$(awk -F'=' '/^total_executed_case_count/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$status_log")
+  case "$nexec" in
+    ''|*[!0-9]*)
+      echo "** ERROR: no readable total_executed_case_count in $status_log" >&2
+      return 1 ;;
+  esac
+  if [ "$nexec" -eq 0 ]; then
+    echo "** ERROR: no testcase was executed" >&2
+    return 1
+  fi
 
   if [ "$nfailed" -gt 0 ]; then
     echo "** $nfailed cases are failed."
@@ -216,6 +291,12 @@ function run_test ()
   pgrep -x sshd >/dev/null || sudo /usr/sbin/sshd
   ulimit -c 10485760
 
+  # This host is the controller and one of the nodes; the others run 'node'.
+  if [ -n "$HA_TOPOLOGY" ]; then
+    prepare_node
+    write_ha_conf
+  fi
+
   local ctp_ret=0
   ( cd "$WORKDIR" && HOME="$WORKDIR" "$CTP_HOME/bin/ctp.sh" "$CTP_CMD" -c "$CTP_HOME/$CTP_CONF" ) \
     || ctp_ret=$?
@@ -240,6 +321,11 @@ case "$1" in
     shift; if [ -n "$1" ]; then TEST_SUITE=$1; fi
     resolve_category
     run_test
+    ;;
+  node)
+    prepare_node
+    # Reaping zombies is PID 1's job; a shell in wait does it, 'sleep' alone does not.
+    while :; do sleep 3600 & wait $!; done
     ;;
   "")
     usage; exit 1
