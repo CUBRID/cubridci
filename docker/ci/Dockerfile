@@ -33,6 +33,7 @@ ENV TZ=Asia/Seoul
 
 ENV WORKDIR=/home
 ENV USER=root
+ENV NODE_USER=qa
 ENV TEST_REPORT=/tmp/tests
 ENV TEST_SUITE=
 ENV BRANCH_TESTTOOLS=develop
@@ -51,6 +52,9 @@ ENV LD_LIBRARY_PATH=$CUBRID/lib:$CUBRID/cci/lib:$LD_LIBRARY_PATH
 ENV SHLIB_PATH=$LD_LIBRARY_PATH
 ENV LIBPATH=$LD_LIBRARY_PATH
 ENV PATH=$CUBRID/bin:/usr/sbin:$PATH
+
+# CTP kills every process owned by the node account, so it must differ from the controller's.
+RUN useradd -m -d $WORKDIR/$NODE_USER $NODE_USER
 
 COPY docker-entrypoint.sh /entrypoint.sh
 
