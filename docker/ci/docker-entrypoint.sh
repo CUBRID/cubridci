@@ -110,11 +110,14 @@ function run_checkout ()
 # is why this refuses to build rather than warning.
 function check_history ()
 {
-  local dir=$1
+  local dir=$1 err
   [ -d "$dir/.git" ] || return 0
-  git -C "$dir" rev-list --count HEAD > /dev/null 2>&1 && return 0
+  # git names the real cause; a fixed hint can only guess at one of the two.
+  err=$(git -C "$dir" rev-list --count HEAD 2>&1 > /dev/null) && return 0
   echo "** ERROR: cannot walk the history of $dir; the build number would be empty." >&2
-  echo "   A checkout that borrowed from BUILD_MIRROR needs that mirror mounted here too." >&2
+  echo "$err" | sed 's/^/   git: /' >&2
+  echo "   A tree checked out with BUILD_MIRROR needs that mirror mounted here too." >&2
+  echo "   A bind-mounted tree owned by another user needs safe.directory." >&2
   return 1
 }
 
