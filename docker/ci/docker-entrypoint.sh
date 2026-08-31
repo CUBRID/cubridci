@@ -11,15 +11,16 @@ Usage: /entrypoint.sh checkout [<category>]
 
 <category> overrides $TEST_SUITE. One category per run.
 Supported categories: sql, medium, shell, shell_heavy, shell_long, isolation,
-                      sql_by_cci, jdbc, ha_repl
+                      sql_by_cci, jdbc, ha_repl, ha_shell
 
 'node' prepares this container as a CTP node and waits. Multi-node categories
 need it on every host the controller does not run on. Required env:
   HA_NODE_PASSWORD  password of the node account ($NODE_USER)
-'test ha_repl' also reads:
+'test ha_repl' and 'test ha_shell' also read:
   HA_SLAVE_HOST     hostname of the slave node
+'test ha_repl' also reads:
   HA_SCENARIO       scenario path (default: $WORKDIR/cubrid-testcases/sql)
-'test shell_heavy' and 'test shell_long' also read:
+'test shell_heavy', 'test shell_long' and 'test ha_shell' also read:
   SHELL_SCENARIO    scenario path (default: the whole category directory)
 
 MEMORY_LEAK=yes runs 'test sql' and 'test medium' under valgrind. It also reads:
@@ -43,11 +44,13 @@ function resolve_category ()
     shell_heavy)
       TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
       CTP_CONF=conf/shell_heavy_ci.conf   REPORT_STYLE=status
+      CONF_WRITER=write_shell_conf
       SHELL_ROOT=$WORKDIR/$TC_REPO/shell_heavy
       SHELL_TIMEOUT=7200 ;;
     shell_long)
       TC_REPO=cubrid-testcases-private    CTP_CMD=shell
       CTP_CONF=conf/shell_long_ci.conf    REPORT_STYLE=status
+      CONF_WRITER=write_shell_conf
       SHELL_ROOT=$WORKDIR/$TC_REPO/longcase/shell
       SHELL_TIMEOUT=54000 ;;
     isolation)
@@ -62,7 +65,14 @@ function resolve_category ()
     ha_repl)
       TC_REPO=cubrid-testcases            CTP_CMD=ha_repl
       CTP_CONF=conf/ha_repl_ci.conf       REPORT_STYLE=status
+      CONF_WRITER=write_ha_conf
       HA_TOPOLOGY=1 ;;
+    ha_shell)
+      TC_REPO=cubrid-testcases-private    CTP_CMD=shell
+      CTP_CONF=conf/ha_shell_ci.conf      REPORT_STYLE=status
+      CONF_WRITER=write_shell_conf
+      SHELL_ROOT=$WORKDIR/$TC_REPO/HA/shell
+      SHELL_TIMEOUT=7200                  HA_TOPOLOGY=1 ;;
     "")
       echo "** ERROR: no category given (\$TEST_SUITE is empty)" >&2; usage; exit 1 ;;
     *)
@@ -157,13 +167,24 @@ function prepare_node ()
     || { echo "** ERROR: HA_NODE_PASSWORD is required to set up the node account" >&2; exit 1; }
 
   echo "$NODE_USER:$HA_NODE_PASSWORD" | chpasswd
-  chown -R "$NODE_USER" "$CUBRID" "$WORKDIR/cubrid-testtools"
 
+  # The shell runner works inside the case's own directory and saves a failing case under
+  # ~/ERROR_BACKUP, so those have to belong to the node account too, not just CUBRID and CTP.
+  local d
+  for d in "$CUBRID" "$WORKDIR"/cubrid-test* "$WORKDIR/ERROR_BACKUP" "$WORKDIR/do_not_delete_core"; do
+    [ -d "$d" ] || continue
+    chown -R "$NODE_USER" "$d"
+  done
+
+  # HOME has to be $WORKDIR, whatever the controller's is: ha_shell cases address the build as
+  # ~/CUBRID, and both CTP and the cases put their own copies and logs next to it.
   local v
-  for v in HOME CUBRID CUBRID_DATABASES CTP_HOME init_path JAVA_HOME \
-           LD_LIBRARY_PATH SHLIB_PATH LIBPATH PATH LANG TZ; do
-    echo "$v=${!v}"
-  done > /etc/environment
+  { echo "HOME=$WORKDIR"
+    for v in CUBRID CUBRID_DATABASES CTP_HOME init_path JAVA_HOME \
+             LD_LIBRARY_PATH SHLIB_PATH LIBPATH PATH LANG TZ; do
+      echo "$v=${!v}"
+    done
+  } > /etc/environment
 
   pgrep -x sshd >/dev/null || /usr/sbin/sshd
   echo "[node] $NODE_USER@$(hostname) ready"
@@ -196,9 +217,11 @@ EOF
   echo "[conf] $CTP_HOME/$CTP_CONF -> master $(hostname), slave $HA_SLAVE_HOST"
 }
 
-# CTP ships no conf for the shell variants. They run the shell runner over different cases,
+# CTP ships no usable conf for the shell variants. They run the shell runner over different cases,
 # so only the scenario, its exclude list, the time a case may take and the label on the report
 # differ; the rest has to stay in step with shell_ci.conf, which is why this derives from it.
+# ha_shell is a shell variant too, and conf/ha_shell.conf is no better a source: every key it
+# holds is commented out except a scenario pointing at the public cases repo.
 function write_shell_conf ()
 {
   local src="$CTP_HOME/conf/shell_ci.conf"
@@ -222,7 +245,23 @@ function write_shell_conf ()
     grep -qxF "$key" "$CTP_HOME/$CTP_CONF" \
       || { echo "** ERROR: $CTP_CONF lacks '$key'; check conf/shell_ci.conf upstream" >&2; exit 1; }
   done
-  echo "[conf] $CTP_HOME/$CTP_CONF -> $scenario"
+
+  # The shell runner reaches a second node through the master instance's relatedhosts, and it
+  # takes the ports and the HA port from the default.* keys already inherited above.
+  local where=$scenario
+  if [ -n "$HA_TOPOLOGY" ]; then
+    [ -n "$HA_SLAVE_HOST" ] \
+      || { echo "** ERROR: HA_SLAVE_HOST is required for $TEST_SUITE" >&2; exit 1; }
+    cat >> "$CTP_HOME/$CTP_CONF" <<EOF
+default.ssh.pwd=$HA_NODE_PASSWORD
+default.ssh.port=22
+env.ha1.ssh.host=$(hostname)
+env.ha1.ssh.user=$NODE_USER
+env.ha1.ssh.relatedhosts=$HA_SLAVE_HOST
+EOF
+    where="$scenario, master $(hostname), slave $HA_SLAVE_HOST"
+  fi
+  echo "[conf] $CTP_HOME/$CTP_CONF -> $where"
 }
 
 # run_memory.sh moves cub_server and cub_cas aside and puts valgrind shims under their names,
@@ -430,11 +469,10 @@ function run_test ()
   # This host is the controller and one of the nodes; the others run 'node'.
   if [ -n "$HA_TOPOLOGY" ]; then
     prepare_node
-    write_ha_conf
   fi
 
-  if [ -n "$SHELL_ROOT" ]; then
-    write_shell_conf
+  if [ -n "$CONF_WRITER" ]; then
+    "$CONF_WRITER"
   fi
 
   if [ -n "$MEMORY_LEAK" ]; then
