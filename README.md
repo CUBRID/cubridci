@@ -22,8 +22,8 @@ Jenkins itself is reachable only from the internal network.
 |            |                                                                                       |
 | ---------- | ------------------------------------------------------------------------------------- |
 | Base       | `rockylinux/rockylinux:8.10`                                                           |
-| Size       | 751 MB on disk, 254 MiB to pull                                                        |
-| Runtime    | JDK 8 (`java-1.8.0-openjdk-devel`), gcc/g++, make, gdb, git                             |
+| Size       | 780 MB on disk, 265 MiB to pull                                                        |
+| Runtime    | JDK 8 (`java-1.8.0-openjdk-devel`), gcc/g++, make, gdb, git, valgrind                   |
 | Tools      | csh, expect, dos2unix, lcov, bc, jq, lsof, file, diffutils, net-tools, telnet, wget    |
 | ssh        | `openssh-server` with host keys generated; CTP reaches nodes and shell cases over ssh   |
 | Locales    | `en_US.UTF-8`, `ko_KR.UTF-8`, `ko_KR.EUC-KR`                                            |
@@ -86,6 +86,37 @@ form. The whole default scenario is large: `sql/_01_object` alone is 3,327 cases
 
 `ha_repl` needs two hosts. Every other category runs in a single container.
 
+### Memory-leak runs
+
+`MEMORY_LEAK=yes` runs `sql` or `medium` under valgrind. It is not a category of its own: CTP
+reads `enable_memory_leak` from the `[sql]` section of the conf, and the SQL runner then starts
+the server and the broker through valgrind's memcheck. No other category reads that key.
+
+**It needs a build with debug symbols.** A release build is `-O2 -DNDEBUG` with no `-g`, so
+memcheck can only report bare addresses — the run would still finish and pass, leaving reports
+nothing can be read out of. `test` reads the build type out of `cubrid_rel` and refuses anything
+that is not a `debug` or `optdebug` build. What the CI publishes as its debug artifact is an
+`optdebug` build, and that is what to inject.
+
+`test` derives `conf/memoryleak_<category>.conf` from the category's own conf and sets three
+keys — `enable_memory_leak=yes`, and the two `cubrid.conf` parameters the nightly regression
+raises for this run, `log_compress=false` and `shutdown_wait_time_in_secs=2147483647`. Under
+valgrind a shutdown takes far longer than the default wait allows. Point `$MEMORY_SCENARIO` at
+a subdirectory to run part of a tree; the whole of `sql` under valgrind is not practical.
+
+The valgrind logs are collected into `$TEST_REPORT` as `memory_<category>_<build>_<timestamp>/`.
+**Leaks do not decide the exit code** — the verdict is the same case-by-case SQL result as a
+plain run. Memcheck reports reachable blocks for a healthy server too, and the image has no
+baseline to judge them against, so read the reports yourself. A run that produced no report at
+all does fail, because the SQL verdict alone would hide it.
+
+```console
+$ nerdctl run --rm -v /path/to/CUBRID:/home/CUBRID \
+    -e TEST_SUITE=sql -e MEMORY_LEAK=yes \
+    -e MEMORY_SCENARIO=/home/cubrid-testcases/sql/_01_object/_01_type/_004_integer \
+    cubridci/cubridci:test_rl8.10 test
+```
+
 ### Environment
 
 | Variable            | Default                    | Used by                                     |
@@ -99,6 +130,8 @@ form. The whole default scenario is large: `sql/_01_object` alone is 3,327 cases
 | `HA_SLAVE_HOST`     | (unset)                    | `test ha_repl` — hostname of the slave node |
 | `HA_SCENARIO`       | `/home/cubrid-testcases/sql` | `test ha_repl` — scenario path             |
 | `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long` — scenario path |
+| `MEMORY_LEAK`       | `no`                       | `test sql`, `test medium` — run under valgrind |
+| `MEMORY_SCENARIO`   | the one the category's conf holds | `test` with `MEMORY_LEAK=yes` — scenario path |
 
 Paths the image fixes: `$WORKDIR` = `/home`, `$CUBRID` = `/home/CUBRID`,
 `$CTP_HOME` = `/home/cubrid-testtools/CTP`.
@@ -225,6 +258,12 @@ to spare.
 next to it, the cci runner uses that instead of `.answer` — the cases whose cci output differs
 from the jdbc output were split off that way. When reading a `sql_by_cci` failure, check which
 answer file it was compared against first.
+
+**A memory-leak run rewrites `$CUBRID/bin`.** CTP's `run_memory.sh` moves `cub_server` and
+`cub_cas` aside as `server.exe` and `cas.exe`, and puts small valgrind shims under their old
+names. It puts them back only if it reaches its last step, so a run killed part-way leaves the
+injected build replaced by the shims. `test` refuses to start when it finds them; re-inject
+CUBRID, or rename the two files back by hand.
 
 **A JUnit XML absence is not an error.** isolation, sql_by_cci and ha_repl write none.
 

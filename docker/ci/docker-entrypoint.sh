@@ -21,6 +21,9 @@ need it on every host the controller does not run on. Required env:
   HA_SCENARIO       scenario path (default: $WORKDIR/cubrid-testcases/sql)
 'test shell_heavy' and 'test shell_long' also read:
   SHELL_SCENARIO    scenario path (default: the whole category directory)
+
+MEMORY_LEAK=yes runs 'test sql' and 'test medium' under valgrind. It also reads:
+  MEMORY_SCENARIO   scenario path (default: the one the category's conf holds)
 EOF
 }
 
@@ -65,6 +68,23 @@ function resolve_category ()
     *)
       echo "** ERROR: unknown category '$TEST_SUITE'" >&2; usage; exit 1 ;;
   esac
+
+  case "${MEMORY_LEAK,,}" in
+    ""|0|no|false|off) MEMORY_LEAK= ;;
+    1|yes|true|on)     MEMORY_LEAK=1 ;;
+    *) echo "** ERROR: MEMORY_LEAK must be yes or no, not '$MEMORY_LEAK'" >&2; exit 1 ;;
+  esac
+
+  # enable_memory_leak lives in the conf's [sql] section, which only the SQL runner reads
+  # (CTP.java executeSQL). Any other category would take the flag and silently ignore it.
+  if [ -n "$MEMORY_LEAK" ]; then
+    case "$TEST_SUITE" in
+      sql|medium) ;;
+      *) echo "** ERROR: MEMORY_LEAK does not apply to '$TEST_SUITE'; only sql and medium" >&2; exit 1 ;;
+    esac
+    MEMORY_SRC_CONF=$CTP_CONF
+    CTP_CONF=conf/memoryleak_$TEST_SUITE.conf
+  fi
 
   case "$REPORT_STYLE" in
     sqlresult) XML_SRC="$CTP_HOME/sql/result" ;;
@@ -205,6 +225,62 @@ function write_shell_conf ()
   echo "[conf] $CTP_HOME/$CTP_CONF -> $scenario"
 }
 
+# run_memory.sh moves cub_server and cub_cas aside and puts valgrind shims under their names,
+# restoring them only if it reaches its last step. A leftover shim means $CUBRID is no longer
+# the injected build, and the run after it would measure the shim.
+function check_memory_env ()
+{
+  command -v valgrind >/dev/null \
+    || { echo "** ERROR: valgrind is not on PATH; a memory-leak run needs it" >&2; exit 1; }
+
+  # A release build is -O2 -DNDEBUG with no -g, so memcheck can only report bare addresses.
+  # The run would still finish and pass, leaving reports nothing can be read out of.
+  local build_type
+  build_type=$("$CUBRID/bin/cubrid_rel" | sed -n 's/.*[0-9]\+bit \(.*\) build for.*/\1/p')
+  case "$build_type" in
+    *debug*) ;;
+    *) echo "** ERROR: a memory-leak run needs a build with debug symbols;" \
+            "$CUBRID is a '${build_type:-unreadable}' build" >&2; exit 1 ;;
+  esac
+
+  local f
+  for f in server.exe cas.exe; do
+    [ ! -e "$CUBRID/bin/$f" ] \
+      || { echo "** ERROR: $CUBRID/bin/$f is left over from an aborted memory-leak run;" \
+                "re-inject CUBRID before running again" >&2; exit 1; }
+  done
+}
+
+# CTP reads enable_memory_leak from the conf, so the flag has to be written into one. The two
+# cubrid.conf parameters are the ones the nightly raises for this run: under valgrind a shutdown
+# takes far longer than the default wait allows.
+function write_memory_conf ()
+{
+  local src="$CTP_HOME/$MEMORY_SRC_CONF" dst="$CTP_HOME/$CTP_CONF"
+  [ -f "$src" ] \
+    || { echo "** ERROR: $src not found; cannot derive $CTP_CONF" >&2; exit 1; }
+  cp -f "$src" "$dst"
+
+  # ini.sh inserts a key that is missing, so a rename upstream would leave the live key at 'no'
+  # beside a dead one at 'yes' and the run would quietly skip valgrind. Only the source shows it.
+  [ -n "$(ini.sh -s sql "$src" enable_memory_leak)" ] \
+    || { echo "** ERROR: $MEMORY_SRC_CONF has no enable_memory_leak key; check the CTP conf upstream" >&2; exit 1; }
+
+  local sql_keys="enable_memory_leak=yes"
+  if [ -n "$MEMORY_SCENARIO" ]; then
+    sql_keys="$sql_keys||scenario=$MEMORY_SCENARIO"
+  fi
+  ini.sh -s sql -u "$sql_keys" "$dst"
+  ini.sh -s sql/cubrid.conf -u "log_compress=false||shutdown_wait_time_in_secs=2147483647" "$dst"
+
+  local got
+  got=$(ini.sh -s sql "$dst" enable_memory_leak)
+  [ "$got" = "yes" ] \
+    || { echo "** ERROR: $CTP_CONF has enable_memory_leak='$got'; ini.sh did not write it" >&2; exit 1; }
+
+  echo "[conf] $dst -> valgrind on, scenario $(ini.sh -s sql "$dst" scenario)"
+}
+
 # $RUN_STAMP keeps reporting and judging off results left by earlier runs.
 function collect_xml ()
 {
@@ -220,6 +296,24 @@ function collect_xml ()
   else
     echo "[report] collected $n JUnit XML file(s) into $TEST_REPORT"
   fi
+}
+
+# The leak reports are the point of the run, and the SQL verdict passes without them, so a run
+# that produced none has to fail. Leaks themselves are not folded into the exit code: memcheck
+# reports reachable blocks for a healthy server too, and there is no baseline to judge against.
+function collect_memory ()
+{
+  local dir
+  dir=$(find "$CTP_HOME/result" -maxdepth 1 -type d -name 'memory_*' -newer "$RUN_STAMP" 2>/dev/null | sort | tail -1)
+  if [ -z "$dir" ]; then
+    echo "** ERROR: no memory_* result under $CTP_HOME/result; valgrind produced nothing" >&2
+    return 1
+  fi
+
+  mkdir -p "$TEST_REPORT"
+  cp -rf "$dir" "$TEST_REPORT/" \
+    || { echo "** ERROR: could not copy $dir into $TEST_REPORT" >&2; return 1; }
+  echo "[report] collected $(basename "$dir") ($(ls -1 "$dir" | wc -l) files) into $TEST_REPORT"
 }
 
 # CTP swallows JUnit-XML writer failures, so the XML must not judge results.
@@ -343,11 +437,20 @@ function run_test ()
     write_shell_conf
   fi
 
+  if [ -n "$MEMORY_LEAK" ]; then
+    check_memory_env
+    write_memory_conf
+  fi
+
   local ctp_ret=0
   ( cd "$WORKDIR" && HOME="$WORKDIR" "$CTP_HOME/bin/ctp.sh" "$CTP_CMD" -c "$CTP_HOME/$CTP_CONF" ) \
     || ctp_ret=$?
 
   collect_xml
+
+  if [ -n "$MEMORY_LEAK" ]; then
+    collect_memory || exit 1
+  fi
 
   if [ "$ctp_ret" -ne 0 ]; then
     echo "** ERROR: CTP exited with $ctp_ret" >&2
