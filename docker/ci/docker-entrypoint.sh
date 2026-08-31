@@ -10,7 +10,8 @@ Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh <command> [<args>...]
 
 <category> overrides $TEST_SUITE. One category per run.
-Supported categories: sql, medium, shell, isolation, sql_by_cci, jdbc, ha_repl
+Supported categories: sql, medium, shell, shell_heavy, shell_long, isolation,
+                      sql_by_cci, jdbc, ha_repl
 
 'node' prepares this container as a CTP node and waits. Multi-node categories
 need it on every host the controller does not run on. Required env:
@@ -18,6 +19,8 @@ need it on every host the controller does not run on. Required env:
 'test ha_repl' also reads:
   HA_SLAVE_HOST     hostname of the slave node
   HA_SCENARIO       scenario path (default: $WORKDIR/cubrid-testcases/sql)
+'test shell_heavy' and 'test shell_long' also read:
+  SHELL_SCENARIO    scenario path (default: the whole category directory)
 EOF
 }
 
@@ -34,6 +37,16 @@ function resolve_category ()
     shell)
       TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
       CTP_CONF=conf/shell_ci.conf         REPORT_STYLE=status ;;
+    shell_heavy)
+      TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
+      CTP_CONF=conf/shell_heavy_ci.conf   REPORT_STYLE=status
+      SHELL_ROOT=$WORKDIR/$TC_REPO/shell_heavy
+      SHELL_TIMEOUT=7200 ;;
+    shell_long)
+      TC_REPO=cubrid-testcases-private    CTP_CMD=shell
+      CTP_CONF=conf/shell_long_ci.conf    REPORT_STYLE=status
+      SHELL_ROOT=$WORKDIR/$TC_REPO/longcase/shell
+      SHELL_TIMEOUT=54000 ;;
     isolation)
       TC_REPO=cubrid-testcases            CTP_CMD=isolation
       CTP_CONF=conf/isolation.conf        REPORT_STYLE=status ;;
@@ -161,6 +174,35 @@ scenario=${HA_SCENARIO:-$WORKDIR/$TC_REPO/sql}
 testcase_exclude_from_file=$WORKDIR/$TC_REPO/sql/config/daily_regression_test_exclude_list_ha_repl.conf
 EOF
   echo "[conf] $CTP_HOME/$CTP_CONF -> master $(hostname), slave $HA_SLAVE_HOST"
+}
+
+# CTP ships no conf for the shell variants. They run the shell runner over different cases,
+# so only the scenario, its exclude list, the time a case may take and the label on the report
+# differ; the rest has to stay in step with shell_ci.conf, which is why this derives from it.
+function write_shell_conf ()
+{
+  local src="$CTP_HOME/conf/shell_ci.conf"
+  [ -f "$src" ] \
+    || { echo "** ERROR: $src not found; cannot derive $CTP_CONF" >&2; exit 1; }
+
+  local scenario=${SHELL_SCENARIO:-$SHELL_ROOT}
+  local exclude="$SHELL_ROOT/config/daily_regression_test_excluded_list_linux.conf"
+  sed -e "s|^scenario=.*|scenario=$scenario|" \
+      -e "s|^testcase_exclude_from_file=.*|testcase_exclude_from_file=$exclude|" \
+      -e "s|^testcase_timeout_in_secs=.*|testcase_timeout_in_secs=$SHELL_TIMEOUT|" \
+      -e "s|^testcase_retry_num=.*|testcase_retry_num=0|" \
+      -e "s|^test_category=.*|test_category=$TEST_SUITE|" \
+      "$src" > "$CTP_HOME/$CTP_CONF"
+
+  # A key renamed upstream makes its sed a no-op, which would silently run the shell scenario.
+  local key
+  for key in "scenario=$scenario" "testcase_exclude_from_file=$exclude" \
+             "testcase_timeout_in_secs=$SHELL_TIMEOUT" "testcase_retry_num=0" \
+             "test_category=$TEST_SUITE"; do
+    grep -qxF "$key" "$CTP_HOME/$CTP_CONF" \
+      || { echo "** ERROR: $CTP_CONF lacks '$key'; check conf/shell_ci.conf upstream" >&2; exit 1; }
+  done
+  echo "[conf] $CTP_HOME/$CTP_CONF -> $scenario"
 }
 
 # $RUN_STAMP keeps reporting and judging off results left by earlier runs.
@@ -295,6 +337,10 @@ function run_test ()
   if [ -n "$HA_TOPOLOGY" ]; then
     prepare_node
     write_ha_conf
+  fi
+
+  if [ -n "$SHELL_ROOT" ]; then
+    write_shell_conf
   fi
 
   local ctp_ret=0

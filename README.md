@@ -56,18 +56,29 @@ only; the git credential is removed when `checkout` exits, so the test step neve
 
 ### Categories
 
-| Category     | Test cases repo               | `GHI_TOKEN` | Cases            | One container  | JUnit XML |
-| ------------ | ----------------------------- | ----------- | ---------------- | -------------- | --------- |
-| `sql`        | `cubrid-testcases`            | no          | 17,451           | about 30 min   | yes       |
-| `medium`     | `cubrid-testcases`            | no          | 975              | about 3 min    | yes       |
-| `shell`      | `cubrid-testcases-private-ex` | **yes**     | 3,468 case dirs  | tens of hours  | yes       |
-| `isolation`  | `cubrid-testcases`            | no          | 6,778            | 5 to 9 hours   | no        |
-| `sql_by_cci` | `cubrid-testcases`            | no          | 17,451           | about 41 min   | no        |
-| `jdbc`       | `cubrid-testcases-private`    | **yes**     | 2,407            | about 3 min    | yes       |
-| `ha_repl`    | `cubrid-testcases`            | no          | scenario-driven  | see below      | no        |
+| Category      | Test cases repo               | `GHI_TOKEN` | Cases           | One container | JUnit XML |
+| ------------- | ----------------------------- | ----------- | --------------- | ------------- | --------- |
+| `sql`         | `cubrid-testcases`            | no          | 17,451          | about 30 min  | yes       |
+| `medium`      | `cubrid-testcases`            | no          | 975             | about 3 min   | yes       |
+| `shell`       | `cubrid-testcases-private-ex` | **yes**     | 3,468 case dirs | tens of hours | yes       |
+| `shell_heavy` | `cubrid-testcases-private-ex` | **yes**     | 142             | hours         | yes       |
+| `shell_long`  | `cubrid-testcases-private`    | **yes**     | 131             | days          | yes       |
+| `isolation`   | `cubrid-testcases`            | no          | 6,778           | 5 to 9 hours  | no        |
+| `sql_by_cci`  | `cubrid-testcases`            | no          | 17,451          | about 41 min  | no        |
+| `jdbc`        | `cubrid-testcases-private`    | **yes**     | 2,407           | about 3 min   | yes       |
+| `ha_repl`     | `cubrid-testcases`            | no          | scenario-driven | see below     | no        |
 
-`shell` and `isolation` are too slow to run whole in one container; split them across
-containers by scenario directory. The other categories finish in one run.
+`shell`, `shell_heavy`, `shell_long` and `isolation` are too slow to run whole in one
+container; split them across containers by scenario directory. The other categories finish in
+one run.
+
+`shell_heavy` and `shell_long` are the shell runner over other case trees — `shell_heavy` for
+cases that need a lot of disk or memory, `shell_long` for cases that take an hour or more
+each. CTP ships no conf for either, so `test` derives one from `conf/shell_ci.conf` and
+overrides five keys: the scenario, its exclude list, the case timeout (7,200 s for
+`shell_heavy`, 54,000 s for `shell_long`), the retry count (0) and the report label. Point
+`$SHELL_SCENARIO` at a subdirectory to run part of a tree. Their results land under
+`result/shell/`, like `shell`, but the JUnit XML is named after the category.
 
 `ha_repl` runs whatever `$HA_SCENARIO` points at, and CTP converts those SQL cases to their HA
 form. The whole default scenario is large: `sql/_01_object` alone is 3,327 cases and took
@@ -82,11 +93,12 @@ form. The whole default scenario is large: `sql/_01_object` alone is 3,327 cases
 | `TEST_SUITE`        | (empty)                    | `checkout`, `test` — the category           |
 | `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — `cubrid-testtools` branch      |
 | `BRANCH_TESTCASES`  | `develop`                  | `checkout` — test-cases branch              |
-| `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell` and `jdbc` |
+| `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long` and `jdbc` |
 | `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML is collected       |
 | `HA_NODE_PASSWORD`  | (unset)                    | `node`, and `test ha_repl` — password for the `qa` account |
 | `HA_SLAVE_HOST`     | (unset)                    | `test ha_repl` — hostname of the slave node |
 | `HA_SCENARIO`       | `/home/cubrid-testcases/sql` | `test ha_repl` — scenario path             |
+| `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long` — scenario path |
 
 Paths the image fixes: `$WORKDIR` = `/home`, `$CUBRID` = `/home/CUBRID`,
 `$CTP_HOME` = `/home/cubrid-testtools/CTP`.
@@ -96,8 +108,8 @@ Paths the image fixes: `$WORKDIR` = `/home`, `$CUBRID` = `/home/CUBRID`,
 `test` exits 0 when every case passed and 1 otherwise. It does not trust CTP's own exit code —
 several runners return 0 even when cases fail, or when java died with an exception. The verdict
 comes from the runner's own result file: `summary_info` for sql and medium, `summary.info` for
-sql_by_cci, `test_status.data` for shell, isolation, jdbc and ha_repl. A run in which no case
-started is a failure, not a pass.
+sql_by_cci, `test_status.data` for the three shell categories, isolation, jdbc and ha_repl. A
+run in which no case started is a failure, not a pass.
 
 JUnit XML from the run is copied into `$TEST_REPORT`. Three categories write no XML —
 isolation, sql_by_cci and ha_repl — and for those `test` prints one warning line and judges the
