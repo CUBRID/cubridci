@@ -6,7 +6,7 @@ LABEL Description="This is a test environment image for CUBRID (rocky8, CTP runt
 RUN set -ex \
         && dnf install -y epel-release \
         && dnf install -y --setopt=tsflags=nodocs --setopt=install_weak_deps=False \
-                gcc-c++ gdb git make \
+                gcc-c++ gdb git make valgrind \
                 vim-minimal lsof procps-ng file diffutils which csh \
                 glibc-locale-source glibc-langpack-en glibc-langpack-ko \
                 net-tools telnet wget \
