@@ -99,7 +99,8 @@ It is the shell runner again — CTP routes `rqg` through it and only splits the
 apart — so its conf comes from `conf/shell_ci.conf` like the other shell variants, with the
 nightly regression's case timeout of 36,000 s and its exclude list,
 `random_query_generator/config/daily_regression_test_exclude_list_RQG.conf`, which is empty
-upstream — so nothing is excluded, and the eleven known failures below fail a whole-tree run.
+upstream — so nothing is excluded, and the one known failure below is enough to make a
+whole-tree run exit 1.
 `$SHELL_SCENARIO` runs part of the tree. Results land under `result/rqg/`, and the report is
 `test-rqg.xml`.
 
@@ -116,8 +117,8 @@ unpatched. If the patch ever finds nothing left to do because the tool was fixed
 
 **`rqg` needs a build with debug symbols**, the same as a memory-leak run. Its cases kill the
 server in the middle of a run and then count the cores it left, and the `fault_injection` cases
-hand those cores to `core_analyzer`; a release build is `-O2 -DNDEBUG` with no `-g`, so nothing
-readable comes out of them and the run passes anyway. `test` reads the build type out of
+hand those cores to CTP's `analyzer.sh`; a release build is `-O2 -DNDEBUG` with no `-g`, so
+nothing readable comes out of them and the run passes anyway. `test` reads the build type out of
 `cubrid_rel` and refuses anything that is not a `debug` or `optdebug` build. Inject what the CI
 publishes as its debug artifact.
 
@@ -334,8 +335,7 @@ to spare.
 | `ha_repl`    | 202 cases in the nightly exclude list                                | Excluded automatically. |
 | `ha_shell`   | `_40_guava/cbrd_26062`                                               | Its answer file has no room for the connect error the master's `copylogdb` prints while the case keeps the slave stopped, and the case blanks JSON values only, so the message survives the diff. |
 | `ha_shell`   | `_22_ha/bug_xdbms2760`                                               | The case waits 200 s and then counts rows, but its writer script ends by dropping the table; on hardware this fast the writer finishes first and the count finds no table. |
-| `rqg`        | `_03_mvcc/recovery/fault_injection`, 10 cases                        | They call `core_analyzer` from `cubrid-testtools-internal`, which ships only source — the image has no built copy of it. |
-| `rqg`        | `_02_issues/bug_bts_16290`                                           | Its `checkdb_catalogs.txt` names catalog classes without an owner qualifier, which `cubrid checkdb -i` has rejected since owner-qualified names arrived. It is the only case that passes `-i`. |
+| `rqg`        | `_02_issues/bug_bts_16290`                                           | Its `checkdb_catalogs.txt` names catalog classes without an owner qualifier, which `cubrid checkdb -i` has rejected since owner-qualified names arrived. It is the only case that passes `-i`. Only 7 of the 104 cases have been run here, so this list is not exhaustive. |
 
 **`sql_by_cci` compares against a different answer file.** Where a case has an `.answer_cci`
 next to it, the cci runner uses that instead of `.answer` — the cases whose cci output differs
