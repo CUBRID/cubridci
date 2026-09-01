@@ -11,7 +11,7 @@ Usage: /entrypoint.sh checkout [<category>]
 
 <category> overrides $TEST_SUITE. One category per run.
 Supported categories: sql, medium, shell, shell_heavy, shell_long, isolation,
-                      sql_by_cci, jdbc, ha_repl, ha_shell
+                      sql_by_cci, jdbc, ha_repl, ha_shell, rqg
 
 'node' prepares this container as a CTP node and waits. Multi-node categories
 need it on every host the controller does not run on. Required env:
@@ -20,7 +20,7 @@ need it on every host the controller does not run on. Required env:
   HA_SLAVE_HOST     hostname of the slave node
 'test ha_repl' also reads:
   HA_SCENARIO       scenario path (default: $WORKDIR/cubrid-testcases/sql)
-'test shell_heavy', 'test shell_long' and 'test ha_shell' also read:
+'test shell_heavy', 'test shell_long', 'test ha_shell' and 'test rqg' also read:
   SHELL_SCENARIO    scenario path (default: the whole category directory)
 
 MEMORY_LEAK=yes runs 'test sql' and 'test medium' under valgrind. It also reads:
@@ -73,6 +73,16 @@ function resolve_category ()
       CONF_WRITER=write_shell_conf
       SHELL_ROOT=$WORKDIR/$TC_REPO/HA/shell
       SHELL_TIMEOUT=7200                  HA_TOPOLOGY=1 ;;
+    rqg)
+      TC_REPO=cubrid-testcases-private    CTP_CMD=rqg
+      CTP_CONF=conf/rqg_ci.conf           REPORT_STYLE=status
+      CONF_WRITER=write_shell_conf
+      SHELL_ROOT=$WORKDIR/$TC_REPO/random_query_generator
+      SHELL_EXCLUDE=$SHELL_ROOT/config/daily_regression_test_exclude_list_RQG.conf
+      SHELL_TIMEOUT=36000
+      TOOL_REPO=cubrid-testtools-internal TOOL_PATH=random_query_generator
+      RQG_HOME=$WORKDIR/$TOOL_REPO/$TOOL_PATH
+      NEEDS_DEBUG=1 ;;
     "")
       echo "** ERROR: no category given (\$TEST_SUITE is empty)" >&2; usage; exit 1 ;;
     *)
@@ -106,25 +116,34 @@ function resolve_category ()
 # Drop the token on exit so the test step never sees a git credential.
 function setup_token ()
 {
-  case "$TC_REPO" in
-    *-private|*-private-ex) ;;
-    *) return 0 ;;
-  esac
+  local repo private=
+  for repo in "$TC_REPO" "$TOOL_REPO"; do
+    case "$repo" in
+      *-private|*-private-ex|*-internal) private="$private $repo" ;;
+    esac
+  done
+  [ -n "$private" ] || return 0
 
   [ -n "$GHI_TOKEN" ] \
-    || { echo "** ERROR: GHI_TOKEN is required to check out $TC_REPO" >&2; exit 1; }
+    || { echo "** ERROR: GHI_TOKEN is required to check out$private" >&2; exit 1; }
 
   TOKEN_CONFIG_KEY="url.https://x-access-token:${GHI_TOKEN}@github.com/.insteadof"
   git config --global "$TOKEN_CONFIG_KEY" https://github.com/
   trap 'git config --global --unset-all "$TOKEN_CONFIG_KEY" 2>/dev/null || true' EXIT
 }
 
+# A third argument narrows the checkout to one path. --depth 1 alone does not help there:
+# cubrid-testtools-internal is 1.1GB at that depth and rqg needs 5.5MB of it, so the blobs
+# outside the path have to be filtered out as well, not just left out of the working tree.
 function checkout_repo ()
 {
   local repo=$1
   local branch=$2
+  local sparse=$3
   local url="https://github.com/CUBRID/$repo.git"
   local dir="$WORKDIR/$repo"
+  local narrow=
+  [ -z "$sparse" ] || narrow="--filter=blob:none --sparse"
   local i ok=
   for i in 1 2 3 4 5; do
     if [ -d "$dir/.git" ]; then
@@ -135,12 +154,17 @@ function checkout_repo ()
         && git clean -df ) && { ok=1; break; }
     else
       git -c fetch.parallel=0 -c core.compression=9 clone -q --depth 1 --branch "$branch" \
-          --single-branch --no-tags "$url" "$dir" && { ok=1; break; }
+          --single-branch --no-tags $narrow "$url" "$dir" \
+        && { [ -z "$sparse" ] || git -C "$dir" sparse-checkout set "$sparse"; } \
+        && { ok=1; break; }
     fi
     echo "[warn] checkout of $repo ($branch) attempt $i/5 failed; retrying in $((i * 10))s" >&2
     sleep $((i * 10))
   done
   [ -n "$ok" ] || { echo "** ERROR: checkout of $repo ($branch) failed after retries" >&2; exit 1; }
+
+  [ -z "$sparse" ] || [ -d "$dir/$sparse" ] \
+    || { echo "** ERROR: $repo has no $sparse after checkout ($branch)" >&2; exit 1; }
 
   local head
   head=$(git -C "$dir" rev-parse --verify HEAD 2>/dev/null) \
@@ -148,11 +172,30 @@ function checkout_repo ()
   echo "[checkout] $repo @ $branch -> $head $(git -C "$dir" log -1 --pretty=format:'%s' 2>/dev/null)"
 }
 
+# defined(@array) became a fatal error in perl 5.22 and the tool still uses it, so it dies on
+# every RL8.10 perl. The guard reads the end state, not the sed, so it also passes once the
+# tool is fixed upstream. Those two lines are the only 'defined @' in the whole tool.
+function patch_rqg_tool ()
+{
+  local f="$RQG_HOME/lib/GenTest/Properties.pm"
+  [ -f "$f" ] \
+    || { echo "** ERROR: $f not found; check $TOOL_REPO upstream" >&2; exit 1; }
+
+  sed -i 's/if defined @illegal;/if @illegal;/; s/if defined @missing;/if @missing;/' "$f"
+  ! grep -q 'defined @' "$f" \
+    || { echo "** ERROR: $f still has defined(@array); check $TOOL_REPO upstream" >&2; exit 1; }
+  echo "[patch] $f -> defined(@array) removed"
+}
+
 function run_checkout ()
 {
   setup_token
   checkout_repo cubrid-testtools "$BRANCH_TESTTOOLS"
   checkout_repo "$TC_REPO" "$BRANCH_TESTCASES"
+  if [ -n "$TOOL_REPO" ]; then
+    checkout_repo "$TOOL_REPO" "$BRANCH_TESTTOOLS" "$TOOL_PATH"
+    patch_rqg_tool
+  fi
 }
 
 # CTP reaches nodes with jsch ChannelExec, a non-login shell that inherits none of
@@ -229,7 +272,7 @@ function write_shell_conf ()
     || { echo "** ERROR: $src not found; cannot derive $CTP_CONF" >&2; exit 1; }
 
   local scenario=${SHELL_SCENARIO:-$SHELL_ROOT}
-  local exclude="$SHELL_ROOT/config/daily_regression_test_excluded_list_linux.conf"
+  local exclude=${SHELL_EXCLUDE:-$SHELL_ROOT/config/daily_regression_test_excluded_list_linux.conf}
   sed -e "s|^scenario=.*|scenario=$scenario|" \
       -e "s|^testcase_exclude_from_file=.*|testcase_exclude_from_file=$exclude|" \
       -e "s|^testcase_timeout_in_secs=.*|testcase_timeout_in_secs=$SHELL_TIMEOUT|" \
@@ -264,6 +307,19 @@ EOF
   echo "[conf] $CTP_HOME/$CTP_CONF -> $where"
 }
 
+# A release build is -O2 -DNDEBUG with no -g, so whatever reads the run afterwards - a leak
+# report, a core - gets bare addresses out of it, and the run still finishes and passes.
+function require_debug_build ()
+{
+  local build_type
+  build_type=$("$CUBRID/bin/cubrid_rel" | sed -n 's/.*[0-9]\+bit \(.*\) build for.*/\1/p')
+  case "$build_type" in
+    *debug*) ;;
+    *) echo "** ERROR: $1 needs a build with debug symbols;" \
+            "$CUBRID is a '${build_type:-unreadable}' build" >&2; exit 1 ;;
+  esac
+}
+
 # run_memory.sh moves cub_server and cub_cas aside and puts valgrind shims under their names,
 # restoring them only if it reaches its last step. A leftover shim means $CUBRID is no longer
 # the injected build, and the run after it would measure the shim.
@@ -272,15 +328,7 @@ function check_memory_env ()
   command -v valgrind >/dev/null \
     || { echo "** ERROR: valgrind is not on PATH; a memory-leak run needs it" >&2; exit 1; }
 
-  # A release build is -O2 -DNDEBUG with no -g, so memcheck can only report bare addresses.
-  # The run would still finish and pass, leaving reports nothing can be read out of.
-  local build_type
-  build_type=$("$CUBRID/bin/cubrid_rel" | sed -n 's/.*[0-9]\+bit \(.*\) build for.*/\1/p')
-  case "$build_type" in
-    *debug*) ;;
-    *) echo "** ERROR: a memory-leak run needs a build with debug symbols;" \
-            "$CUBRID is a '${build_type:-unreadable}' build" >&2; exit 1 ;;
-  esac
+  require_debug_build "a memory-leak run"
 
   local f
   for f in server.exe cas.exe; do
@@ -478,6 +526,19 @@ function run_test ()
   if [ -n "$MEMORY_LEAK" ]; then
     check_memory_env
     write_memory_conf
+  fi
+
+  # rqg cases kill the server mid-run and then look for cores, and fault_injection cases hand
+  # them to core_analyzer; a release build leaves nothing readable in them.
+  if [ -n "$NEEDS_DEBUG" ]; then
+    require_debug_build "test $TEST_SUITE"
+  fi
+
+  # rqg cases reach the tool through $RQG_HOME, which lives in a repo of its own.
+  if [ -n "$RQG_HOME" ]; then
+    [ -f "$RQG_HOME/gentest.pl" ] \
+      || { echo "** ERROR: no RQG tool at $RQG_HOME; run 'checkout' first" >&2; exit 1; }
+    export RQG_HOME
   fi
 
   local ctp_ret=0
