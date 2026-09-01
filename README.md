@@ -22,7 +22,7 @@ Jenkins itself is reachable only from the internal network.
 |            |                                                                                       |
 | ---------- | ------------------------------------------------------------------------------------- |
 | Base       | `rockylinux/rockylinux:8.10`                                                           |
-| Size       | 780 MB on disk, 265 MiB to pull                                                        |
+| Size       | 786 MB on disk, 266 MiB to pull                                                        |
 | Runtime    | JDK 8 (`java-1.8.0-openjdk-devel`), gcc/g++, make, gdb, git, valgrind                   |
 | Tools      | csh, expect, dos2unix, lcov, bc, jq, lsof, file, diffutils, net-tools, telnet, wget    |
 | ssh        | `openssh-server` with host keys generated; CTP reaches nodes and shell cases over ssh   |
@@ -68,7 +68,7 @@ only; the git credential is removed when `checkout` exits, so the test step neve
 | `jdbc`        | `cubrid-testcases-private`    | **yes**     | 2,407           | about 3 min   | yes       |
 | `ha_repl`     | `cubrid-testcases`            | no          | scenario-driven | see below     | no        |
 | `ha_shell`    | `cubrid-testcases-private`    | **yes**     | 373 case dirs   | see below     | yes       |
-| `rqg`         | `cubrid-testcases-private`    | **yes**     | 104             | hours         | yes       |
+| `rqg`         | `cubrid-testcases-private`    | **yes**     | 104             | hours (est.)  | yes       |
 
 `shell`, `shell_heavy`, `shell_long`, `isolation`, `ha_shell` and `rqg` are too slow to run
 whole in one run; split them by scenario directory. The other categories finish in one run.
@@ -99,13 +99,15 @@ It is the shell runner again — CTP routes `rqg` through it and only splits the
 apart — so its conf comes from `conf/shell_ci.conf` like the other shell variants, with the
 nightly regression's case timeout of 36,000 s and its exclude list,
 `random_query_generator/config/daily_regression_test_exclude_list_RQG.conf`, which is empty
-upstream. `$SHELL_SCENARIO` runs part of the tree. Results land under `result/rqg/`, and the
-report is `test-rqg.xml`.
+upstream — so nothing is excluded, and the eleven known failures below fail a whole-tree run.
+`$SHELL_SCENARIO` runs part of the tree. Results land under `result/rqg/`, and the report is
+`test-rqg.xml`.
 
 The generator itself is not in the test-cases repo. It is perl, it lives in
-`cubrid-testtools-internal`, and `checkout rqg` fetches that repo too and exports `$RQG_HOME`.
-That repo is 1.1 GB and rqg needs 5.5 MB of it, so the clone is filtered down to
-`random_query_generator` alone; `--depth 1` by itself still fetches every blob at that depth.
+`cubrid-testtools-internal`, and `checkout rqg` fetches that repo too; `test rqg` points
+`$RQG_HOME` at it. That repo is 1.1 GB and rqg needs 5.5 MB of it, so the clone is filtered
+down to `random_query_generator` alone; `--depth 1` by itself still fetches every blob at that
+depth.
 The tool reaches CUBRID from perl through `DBI` and `DBD::cubrid`, both of which the image
 carries. `checkout` also patches one line of the tool: `GenTest/Properties.pm` uses
 `defined(@array)`, which perl 5.22 turned into a fatal error, so the tool cannot start
@@ -118,6 +120,14 @@ hand those cores to `core_analyzer`; a release build is `-O2 -DNDEBUG` with no `
 readable comes out of them and the run passes anyway. `test` reads the build type out of
 `cubrid_rel` and refuses anything that is not a `debug` or `optdebug` build. Inject what the CI
 publishes as its debug artifact.
+
+**Inject a fresh CUBRID for every rqg run.** The runner deletes
+`$CUBRID/lib/libcubrid_all_locales.so` before each case, so a build whose
+`conf/cubrid_locales.txt` still lists locales loses the library those entries need and
+`createdb` fails — with a locale error, then a chain of connection failures that read like
+something else entirely. A freshly installed build has that file empty, so this only bites when
+one build is reused across runs. The image cannot prevent it: pre-building the library does not
+help when the runner removes it, and `conf/` is restored from the runner's own snapshot.
 
 `ha_repl` and `ha_shell` need two hosts. Every other category runs in a single container.
 
@@ -157,7 +167,7 @@ $ nerdctl run --rm -v /path/to/CUBRID:/home/CUBRID \
 | Variable            | Default                    | Used by                                     |
 | ------------------- | -------------------------- | ------------------------------------------- |
 | `TEST_SUITE`        | (empty)                    | `checkout`, `test` — the category           |
-| `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — `cubrid-testtools` branch      |
+| `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — branch of `cubrid-testtools`, and of `cubrid-testtools-internal` for `rqg` |
 | `BRANCH_TESTCASES`  | `develop`                  | `checkout` — test-cases branch              |
 | `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long`, `jdbc`, `ha_shell` and `rqg` |
 | `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML is collected       |

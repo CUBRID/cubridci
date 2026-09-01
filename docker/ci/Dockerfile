@@ -10,6 +10,7 @@ ARG DBD_CUBRID_SHA256=1552e9b2bb93d8a32010f2bb77dc4f0c152971aed019ce42e494e86f24
 # lcov needs EPEL; glibc-locale-source only feeds localedef, so drop it in the same layer.
 # perl-devel and ncurses-devel only build DBD::cubrid (the bundled CCI includes curses.h), and
 # Makefile.PL ignores a failed CCI build, so the static library is checked before make.
+# glibc-gconv-extra comes in with perl-devel and is not in the base image, so it goes back out.
 RUN set -ex \
         && dnf install -y epel-release \
         && dnf install -y --setopt=tsflags=nodocs --setopt=install_weak_deps=False \

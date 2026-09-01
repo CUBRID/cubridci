@@ -81,6 +81,7 @@ function resolve_category ()
       SHELL_EXCLUDE=$SHELL_ROOT/config/daily_regression_test_exclude_list_RQG.conf
       SHELL_TIMEOUT=36000
       TOOL_REPO=cubrid-testtools-internal TOOL_PATH=random_query_generator
+      TOOL_PATCHER=patch_rqg_tool
       RQG_HOME=$WORKDIR/$TOOL_REPO/$TOOL_PATH
       NEEDS_DEBUG=1 ;;
     "")
@@ -194,7 +195,9 @@ function run_checkout ()
   checkout_repo "$TC_REPO" "$BRANCH_TESTCASES"
   if [ -n "$TOOL_REPO" ]; then
     checkout_repo "$TOOL_REPO" "$BRANCH_TESTTOOLS" "$TOOL_PATH"
-    patch_rqg_tool
+    if [ -n "$TOOL_PATCHER" ]; then
+      "$TOOL_PATCHER"
+    fi
   fi
 }
 
@@ -311,11 +314,12 @@ EOF
 # report, a core - gets bare addresses out of it, and the run still finishes and passes.
 function require_debug_build ()
 {
+  local what=$1
   local build_type
   build_type=$("$CUBRID/bin/cubrid_rel" | sed -n 's/.*[0-9]\+bit \(.*\) build for.*/\1/p')
   case "$build_type" in
     *debug*) ;;
-    *) echo "** ERROR: $1 needs a build with debug symbols;" \
+    *) echo "** ERROR: $what needs a build with debug symbols;" \
             "$CUBRID is a '${build_type:-unreadable}' build" >&2; exit 1 ;;
   esac
 }
@@ -528,13 +532,12 @@ function run_test ()
     write_memory_conf
   fi
 
-  # rqg cases kill the server mid-run and then look for cores, and fault_injection cases hand
-  # them to core_analyzer; a release build leaves nothing readable in them.
+  # rqg cases kill the server mid-run and then read the cores it left.
   if [ -n "$NEEDS_DEBUG" ]; then
     require_debug_build "test $TEST_SUITE"
   fi
 
-  # rqg cases reach the tool through $RQG_HOME, which lives in a repo of its own.
+  # The tool is in a repo of its own, so checkout can succeed without it being there.
   if [ -n "$RQG_HOME" ]; then
     [ -f "$RQG_HOME/gentest.pl" ] \
       || { echo "** ERROR: no RQG tool at $RQG_HOME; run 'checkout' first" >&2; exit 1; }
