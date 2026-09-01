@@ -67,10 +67,10 @@ only; the git credential is removed when `checkout` exits, so the test step neve
 | `sql_by_cci`  | `cubrid-testcases`            | no          | 17,451          | about 41 min  | no        |
 | `jdbc`        | `cubrid-testcases-private`    | **yes**     | 2,407           | about 3 min   | yes       |
 | `ha_repl`     | `cubrid-testcases`            | no          | scenario-driven | see below     | no        |
+| `ha_shell`    | `cubrid-testcases-private`    | **yes**     | 373 case dirs   | see below     | yes       |
 
-`shell`, `shell_heavy`, `shell_long` and `isolation` are too slow to run whole in one
-container; split them across containers by scenario directory. The other categories finish in
-one run.
+`shell`, `shell_heavy`, `shell_long`, `isolation` and `ha_shell` are too slow to run whole in
+one run; split them by scenario directory. The other categories finish in one run.
 
 `shell_heavy` and `shell_long` are the shell runner over other case trees — `shell_heavy` for
 cases that need a lot of disk or memory, `shell_long` for cases that take an hour or more
@@ -84,7 +84,16 @@ overrides five keys: the scenario, its exclude list, the case timeout (7,200 s f
 form. The whole default scenario is large: `sql/_01_object` alone is 3,327 cases and took
 2 hours 30 minutes on two containers.
 
-`ha_repl` needs two hosts. Every other category runs in a single container.
+`ha_shell` is the shell runner over `HA/shell`, so it is derived from `conf/shell_ci.conf` the
+same way `shell_heavy` and `shell_long` are, with a 7,200 s case timeout — CTP's own
+`conf/ha_shell.conf` holds nothing but comments and a scenario pointing at the public cases
+repo. On top of the five shell keys it writes the master node as an env instance and the slave
+as that instance's `relatedhosts`; the ports and the HA port come from the `default.*` keys it
+inherits. Each case builds its own HA pair by calling `setup_ha_environment` from
+`$init_path/make_ha.sh`, which reaches the slave over ssh. `$SHELL_SCENARIO` runs part of the
+tree, and the report is `test-ha_shell.xml` under `result/shell/`.
+
+`ha_repl` and `ha_shell` need two hosts. Every other category runs in a single container.
 
 ### Memory-leak runs
 
@@ -124,12 +133,12 @@ $ nerdctl run --rm -v /path/to/CUBRID:/home/CUBRID \
 | `TEST_SUITE`        | (empty)                    | `checkout`, `test` — the category           |
 | `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — `cubrid-testtools` branch      |
 | `BRANCH_TESTCASES`  | `develop`                  | `checkout` — test-cases branch              |
-| `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long` and `jdbc` |
+| `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long`, `jdbc` and `ha_shell` |
 | `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML is collected       |
-| `HA_NODE_PASSWORD`  | (unset)                    | `node`, and `test ha_repl` — password for the `qa` account |
-| `HA_SLAVE_HOST`     | (unset)                    | `test ha_repl` — hostname of the slave node |
+| `HA_NODE_PASSWORD`  | (unset)                    | `node`, and `test ha_repl` / `test ha_shell` — password for the `qa` account |
+| `HA_SLAVE_HOST`     | (unset)                    | `test ha_repl`, `test ha_shell` — hostname of the slave node |
 | `HA_SCENARIO`       | `/home/cubrid-testcases/sql` | `test ha_repl` — scenario path             |
-| `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long` — scenario path |
+| `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long`, `test ha_shell` — scenario path |
 | `MEMORY_LEAK`       | `no`                       | `test sql`, `test medium` — run under valgrind |
 | `MEMORY_SCENARIO`   | the one the category's conf holds | `test` with `MEMORY_LEAK=yes` — scenario path |
 
@@ -141,7 +150,7 @@ Paths the image fixes: `$WORKDIR` = `/home`, `$CUBRID` = `/home/CUBRID`,
 `test` exits 0 when every case passed and 1 otherwise. It does not trust CTP's own exit code —
 several runners return 0 even when cases fail, or when java died with an exception. The verdict
 comes from the runner's own result file: `summary_info` for sql and medium, `summary.info` for
-sql_by_cci, `test_status.data` for the three shell categories, isolation, jdbc and ha_repl. A
+sql_by_cci, `test_status.data` for the four shell categories, isolation, jdbc and ha_repl. A
 run in which no case started is a failure, not a pass.
 
 JUnit XML from the run is copied into `$TEST_REPORT`. Three categories write no XML —
@@ -192,32 +201,49 @@ a zombie and the second run hangs in `cubrid server stop`, waiting on it forever
 
 ### Multi-node categories
 
-`ha_repl` needs two containers, and **their hostnames must differ**. CTP builds its
-`ha_node_list` by running `hostname` over ssh on each node, so a single container — and a single
-pod with two containers, which shares the UTS namespace — cannot host both. One host runs the
-controller and the master; the other runs the slave.
+`ha_repl` and `ha_shell` each need two containers, and **their hostnames must differ**. CTP
+builds its `ha_node_list` by running `hostname` over ssh on each node, so a single container —
+and a single pod with two containers, which shares the UTS namespace — cannot host both. One
+host runs the controller and the master; the other runs the slave.
 
 Both need the same `HA_NODE_PASSWORD`. CTP authenticates to nodes by password only, so the `qa`
 account gets its password at run time from that variable; the image bakes in none.
+
+**Give each container its own CUBRID.** Both nodes rewrite `$CUBRID/conf` and create databases
+under it, and the shell runner keeps a copy of the whole tree in the node account's home, so two
+containers cannot share one host directory.
 
 **Start the slave first**, then the master:
 
 ```bash
 # slave
 docker run -d --name han2 --hostname han2 \
-  -v "$PWD/CUBRID:/home/CUBRID" \
+  -v "$PWD/CUBRID-slave:/home/CUBRID" \
   -e HA_NODE_PASSWORD \
   cubridci/cubridci:test_rl8.10 \
   bash -lc '/entrypoint.sh checkout ha_repl && /entrypoint.sh node'
 
 # controller and master
 docker run --rm --name han1 --hostname han1 \
-  -v "$PWD/CUBRID:/home/CUBRID" \
+  -v "$PWD/CUBRID-master:/home/CUBRID" \
   -e HA_NODE_PASSWORD \
   -e HA_SLAVE_HOST=han2 \
   -e HA_SCENARIO=/home/cubrid-testcases/sql/_01_object \
   cubridci/cubridci:test_rl8.10 \
   bash -lc '/entrypoint.sh checkout ha_repl && /entrypoint.sh test ha_repl'
+```
+
+`ha_shell` has the same shape. Its cases live in a private repo, so both containers also need
+`GHI_TOKEN`, and the scenario comes from `$SHELL_SCENARIO`:
+
+```bash
+docker run --rm --name has1 --hostname has1 \
+  -v "$PWD/CUBRID-master:/home/CUBRID" \
+  -e HA_NODE_PASSWORD -e GHI_TOKEN \
+  -e HA_SLAVE_HOST=has2 \
+  -e SHELL_SCENARIO=/home/cubrid-testcases-private/HA/shell/_22_ha \
+  cubridci/cubridci:test_rl8.10 \
+  bash -lc '/entrypoint.sh checkout ha_shell && /entrypoint.sh test ha_shell'
 ```
 
 The two containers must resolve each other by hostname. A docker or nerdctl bridge network
@@ -227,7 +253,23 @@ Service and add `dnsConfig.searches`, or use `hostAliases`.
 `test ha_repl` writes `conf/ha_repl_ci.conf` itself, because the master and slave hostnames are
 only known at run time. It passes the nightly regression's exclude list —
 `sql/config/daily_regression_test_exclude_list_ha_repl.conf`, 202 cases — so this image and the
-nightly run agree on which cases are known to fail.
+nightly run agree on which cases are known to fail. `test ha_shell` writes
+`conf/ha_shell_ci.conf` the same way and passes `HA/shell/config/daily_regression_test_excluded_list_linux.conf`,
+which is empty upstream.
+
+**The node account's environment lives in `/etc/environment`.** CTP opens a node session with a
+non-login shell that inherits none of the image's `ENV`, so `test` writes the variables the
+runners need into that file. `HOME` there is `/home`, whatever the controller's is, and `/home`
+is also the `qa` account's home directory in `/etc/passwd` — ten ha_shell cases address the build
+as `~/CUBRID`, and an ssh session starts in the account's home directory no matter what `HOME`
+says, so the two have to agree. The shell runner and the cases write next to it: `$CUBRID` is
+copied to `~/.CUBRID_SHELL_FM`, a failing case is saved under `~/ERROR_BACKUP`.
+
+**The image turns ssh host-key checking off** (`/etc/ssh/ssh_config.d/99-cubridci.conf`). Eleven
+ha_shell cases spawn `ssh` themselves and drive it with `expect`, and their patterns expect the
+`(yes/no)?` prompt of an older OpenSSH — OpenSSH 8 asks `(yes/no/[fingerprint])?` instead, which
+those patterns never match, so the case hangs until its own timeout. CTP already disables the
+check for its own connections, and the nodes are containers created per run.
 
 The node account is deliberately not `root`. CTP's cleanup kills every process owned by the node
 account except its own ancestors, so a node running as the same user as the controller kills the
@@ -253,6 +295,8 @@ to spare.
 | `jdbc`       | `TestAPIS833.test1()`, `TestAPIS833.test3()`, `TestCUBRIDDataSource.test2()` | Known failures. |
 | `jdbc`       | `testsuite/simple/StatementsTest.testCancelStatement`                | Never finishes. `Statement.cancel()` does not take effect and the runner has no per-case timeout. Exclude it, or the run hangs forever. |
 | `ha_repl`    | 202 cases in the nightly exclude list                                | Excluded automatically. |
+| `ha_shell`   | `_40_guava/cbrd_26062`                                               | Its answer file has no room for the connect error the master's `copylogdb` prints while the case keeps the slave stopped, and the case blanks JSON values only, so the message survives the diff. |
+| `ha_shell`   | `_22_ha/bug_xdbms2760`                                               | The case waits 200 s and then counts rows, but its writer script ends by dropping the table; on hardware this fast the writer finishes first and the count finds no table. |
 
 **`sql_by_cci` compares against a different answer file.** Where a case has an `.answer_cci`
 next to it, the cci runner uses that instead of `.answer` — the cases whose cci output differs

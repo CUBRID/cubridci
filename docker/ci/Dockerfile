@@ -20,9 +20,13 @@ RUN set -ex \
         && dnf clean all -y \
         && rm -rf /var/cache/dnf /var/tmp/* /tmp/*
 
+# Test cases spawn ssh themselves and drive it with expect, and their patterns predate the
+# host-key prompt OpenSSH 8 prints; CTP turns the check off for its own connections the same way.
 RUN set -ex \
         && ssh-keygen -A \
         && sed -i 's/^account.*pam_nologin.so/#&/' /etc/pam.d/sshd \
+        && printf 'Host *\n    StrictHostKeyChecking no\n    UserKnownHostsFile /dev/null\n    LogLevel ERROR\n' \
+                > /etc/ssh/ssh_config.d/99-cubridci.conf \
         && mkdir -p /var/run/sshd /home/do_not_delete_core /home/ERROR_BACKUP \
         && ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime \
         && echo "Asia/Seoul" > /etc/timezone
@@ -54,7 +58,9 @@ ENV LIBPATH=$LD_LIBRARY_PATH
 ENV PATH=$CUBRID/bin:/usr/sbin:$PATH
 
 # CTP kills every process owned by the node account, so it must differ from the controller's.
-RUN useradd -m -d $WORKDIR/$NODE_USER $NODE_USER
+# Its home is $WORKDIR, where CUBRID and CTP live: cases address the build as ~/CUBRID, and an
+# ssh session lands in the account's home whatever HOME says.
+RUN useradd -M -d $WORKDIR $NODE_USER
 
 COPY docker-entrypoint.sh /entrypoint.sh
 
