@@ -457,9 +457,10 @@ function check_coverage_env ()
 }
 
 # gcov merges into an existing .gcda, so anything left behind would be counted in this run.
-# This is the last step before CTP starts, because every instrumented binary the entrypoint
-# runs itself - cubrid_rel in the guards above - leaves a .gcda too, and those would make
-# run_lcov's "nothing was executed" check pass on a run that did nothing.
+# This is the last step before CTP starts, because an instrumented binary writes a .gcda for
+# every translation unit linked into it: one cubrid_rel, which the guards above run, leaves
+# 373 of them. Clearing any earlier would count those as this run's, and would leave
+# run_lcov's "nothing was executed" check passing on a run that did nothing.
 function clear_gcda ()
 {
   find "$COVERAGE_SRC" -name '*.gcda' -delete
