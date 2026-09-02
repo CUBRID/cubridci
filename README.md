@@ -63,6 +63,7 @@ only; the git credential is removed when `checkout` exits, so the test step neve
 | `shell`       | `cubrid-testcases-private-ex` | **yes**     | 3,468 case dirs | tens of hours | yes       |
 | `shell_heavy` | `cubrid-testcases-private-ex` | **yes**     | 142             | hours         | yes       |
 | `shell_long`  | `cubrid-testcases-private`    | **yes**     | 131             | days          | yes       |
+| `cci`         | `cubrid-testcases-private`    | **yes**     | 322             | 90 min (est.) | yes       |
 | `isolation`   | `cubrid-testcases`            | no          | 6,778           | 5 to 9 hours  | no        |
 | `sql_by_cci`  | `cubrid-testcases`            | no          | 17,451          | about 41 min  | no        |
 | `jdbc`        | `cubrid-testcases-private`    | **yes**     | 2,407           | about 3 min   | yes       |
@@ -80,6 +81,18 @@ overrides five keys: the scenario, its exclude list, the case timeout (7,200 s f
 `shell_heavy`, 54,000 s for `shell_long`), the retry count (0) and the report label. Point
 `$SHELL_SCENARIO` at a subdirectory to run part of a tree. Their results land under
 `result/shell/`, like `shell`, but the JUnit XML is named after the category.
+
+`cci` tests the CCI driver itself: every case compiles a small C program against
+`$CUBRID/include` and `libcascci` and then runs it. It is not `sql_by_cci`, which runs the SQL
+cases through cci instead of jdbc. It is another shell variant, so its conf is derived from
+`conf/shell_ci.conf` like the others, with the nightly regression's case timeout of 7,200 s and
+no retry. **It passes no exclude list.** There is no general one in the cases repo — not on any
+of its 57 branches — and the only lists there belong to the driver-server compatibility test,
+which are keyed by version and stop at 11.2.0. The nightly names a list that is not in the repo
+at all and gets away with it because it does not run cci through CTP; CTP refuses to start when
+that key points at a missing file, so the key is left empty instead. `$SHELL_SCENARIO` runs part of the tree. Results land under
+`result/shell/`, and the report is `test-cci.xml`. A run over more than one case shares one
+`ccidb` database, and that costs cases — see the known failures below.
 
 `ha_repl` runs whatever `$HA_SCENARIO` points at, and CTP converts those SQL cases to their HA
 form. The whole default scenario is large: `sql/_01_object` alone is 3,327 cases and took
@@ -171,12 +184,12 @@ $ nerdctl run --rm -v /path/to/CUBRID:/home/CUBRID \
 | `TEST_SUITE`        | (empty)                    | `checkout`, `test` — the category           |
 | `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — branch of `cubrid-testtools`, and of `cubrid-testtools-internal` for `rqg` |
 | `BRANCH_TESTCASES`  | `develop`                  | `checkout` — test-cases branch              |
-| `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long`, `jdbc`, `ha_shell` and `rqg` |
+| `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long`, `cci`, `jdbc`, `ha_shell` and `rqg` |
 | `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML is collected       |
 | `HA_NODE_PASSWORD`  | (unset)                    | `node`, and `test ha_repl` / `test ha_shell` — password for the `qa` account |
 | `HA_SLAVE_HOST`     | (unset)                    | `test ha_repl`, `test ha_shell` — hostname of the slave node |
 | `HA_SCENARIO`       | `/home/cubrid-testcases/sql` | `test ha_repl` — scenario path             |
-| `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long`, `test ha_shell`, `test rqg` — scenario path |
+| `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long`, `test cci`, `test ha_shell`, `test rqg` — scenario path |
 | `MEMORY_LEAK`       | `no`                       | `test sql`, `test medium` — run under valgrind |
 | `MEMORY_SCENARIO`   | the one the category's conf holds | `test` with `MEMORY_LEAK=yes` — scenario path |
 
@@ -189,7 +202,7 @@ Paths the image fixes: `$WORKDIR` = `/home`, `$CUBRID` = `/home/CUBRID`,
 `test` exits 0 when every case passed and 1 otherwise. It does not trust CTP's own exit code —
 several runners return 0 even when cases fail, or when java died with an exception. The verdict
 comes from the runner's own result file: `summary_info` for sql and medium, `summary.info` for
-sql_by_cci, `test_status.data` for the four shell categories, isolation, jdbc, ha_repl and rqg.
+sql_by_cci, `test_status.data` for the five shell categories, isolation, jdbc, ha_repl and rqg.
 A run in which no case started is a failure, not a pass.
 
 JUnit XML from the run is copied into `$TEST_REPORT`. Three categories write no XML —
@@ -333,6 +346,7 @@ to spare.
 | `sql_by_cci` | 13 cases that have an `.answer_cci`                                  | NUMERIC precision and a `%TYPE` return error. |
 | `jdbc`       | `TestAPIS833.test1()`, `TestAPIS833.test3()`, `TestCUBRIDDataSource.test2()` | Known failures. |
 | `jdbc`       | `testsuite/simple/StatementsTest.testCancelStatement`                | Never finishes. `Statement.cancel()` does not take effect and the runner has no per-case timeout. Exclude it, or the run hangs forever. |
+| `cci`        | `_01_simple`: `_10_stest10`, `_11_stest11`, `_14_stest14`, `_19_stest19`, `_20_stest20`, `_21_stest21`, `_23_stest23`, `_27_stest27`, `_29_stest29` | Only when an earlier case built the shared `ccidb` first. `create_ccidb` caches the database as `databases/ccidbbak`, so whichever case runs first fixes the table options for the rest. These nine set `create_table_reuseoid=no` themselves — CBRD-23708 made `REUSE_OID` the default, and such a class returns no instance OIDs — but `_01_stest1` builds the cache without it. Each passes alone once `ccidbbak` is gone, and the nightly's own `init.sh` caches the same way. |
 | `ha_repl`    | 202 cases in the nightly exclude list                                | Excluded automatically. |
 | `ha_shell`   | `_40_guava/cbrd_26062`                                               | Its answer file has no room for the connect error the master's `copylogdb` prints while the case keeps the slave stopped, and the case blanks JSON values only, so the message survives the diff. |
 | `ha_shell`   | `_22_ha/bug_xdbms2760`                                               | The case waits 200 s and then counts rows, but its writer script ends by dropping the table; on hardware this fast the writer finishes first and the count finds no table. |
