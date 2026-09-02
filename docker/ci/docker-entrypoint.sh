@@ -207,7 +207,7 @@ function package_gcov ()
 
   # .git is a third of the tree and no use to lcov; the build directory is, so it stays.
   # The .gcda are this build's own coverage - build.sh runs instrumented binaries of its own,
-  # which left 376 of them here in the first real build - and a test run must not count them.
+  # which left 375 of them here in the first real build - and a test run must not count them.
   tar czf "$out/$src_tar" --exclude=.git --exclude='*.gcda' \
       -C "$(dirname "$src")" "$(basename "$src")" || return 1
   tar czf "$out/$build_tar" -C "$(dirname $CUBRID)" "$(basename $CUBRID)" || return 1
