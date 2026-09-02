@@ -350,8 +350,6 @@ EOF
   echo "[conf] $CTP_HOME/$CTP_CONF -> $where"
 }
 
-# A release build is -O2 -DNDEBUG with no -g, so whatever reads the run afterwards - a leak
-# report, a core - gets bare addresses out of it, and the run still finishes and passes.
 # cubrid_rel prints "(64bit <type> build for <os>)", where <type> is one of release, debug,
 # optdebug, coverage debug, profile debug or unknown (CMakeLists.txt BUILD_TYPE).
 function build_type_of ()
@@ -359,6 +357,8 @@ function build_type_of ()
   "$CUBRID/bin/cubrid_rel" | sed -n 's/.*[0-9]\+bit \(.*\) build for.*/\1/p'
 }
 
+# A release build is -O2 -DNDEBUG with no -g, so whatever reads the run afterwards - a leak
+# report, a core - gets bare addresses out of it, and the run still finishes and passes.
 function require_debug_build ()
 {
   local what=$1 build_type
@@ -458,6 +458,8 @@ function lcov_name ()
 function run_lcov ()
 {
   local out=$1
+  [ -d "$COVERAGE_SRC" ] \
+    || { echo "** ERROR: no coverage source tree at $COVERAGE_SRC" >&2; return 1; }
   [ -n "$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit)" ] \
     || { echo "** ERROR: no .gcda under $COVERAGE_SRC; nothing was executed under gcov" >&2; return 1; }
   # The system gcov matches the compiler both images carry; CTP bundles one built by an older
