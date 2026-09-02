@@ -418,12 +418,21 @@ function write_memory_conf ()
   echo "[conf] $dst -> valgrind on, scenario $(ini.sh -s sql "$dst" scenario)"
 }
 
-# The .gcda paths are compiled into the binaries, so the tree has to sit where it was built.
-# gcov also merges into an existing .gcda, which would mix this run with whatever ran before.
+# The .gcda paths are compiled into the binaries, so the tree has to sit where it was built,
+# and it has to be writable: gcov reports "profiling: <path>: Cannot open" and drops the data.
 function check_coverage_env ()
 {
   command -v lcov >/dev/null \
     || { echo "** ERROR: lcov is not on PATH; a coverage run needs it" >&2; exit 1; }
+
+  [ -d "$COVERAGE_SRC" ] \
+    || { echo "** ERROR: no coverage source tree at $COVERAGE_SRC; unpack the gcov source" \
+              "archive so its tree lands there" >&2; exit 1; }
+  [ -n "$(find "$COVERAGE_SRC" -name '*.gcno' -print -quit)" ] \
+    || { echo "** ERROR: no .gcno under $COVERAGE_SRC; that tree is not from a coverage build" >&2; exit 1; }
+
+  # Counted before the build-type probe, which runs an instrumented binary of its own.
+  COVERAGE_STALE=$(find "$COVERAGE_SRC" -name '*.gcda' -printf . | wc -c)
 
   local build_type
   build_type=$(build_type_of)
@@ -433,19 +442,19 @@ function check_coverage_env ()
             "$CUBRID is a '${build_type:-unreadable}' build" >&2; exit 1 ;;
   esac
 
-  [ -d "$COVERAGE_SRC" ] \
-    || { echo "** ERROR: no coverage source tree at $COVERAGE_SRC; unpack the gcov source" \
-              "archive so its tree lands there" >&2; exit 1; }
-  [ -n "$(find "$COVERAGE_SRC" -name '*.gcno' -print -quit)" ] \
-    || { echo "** ERROR: no .gcno under $COVERAGE_SRC; that tree is not from a coverage build" >&2; exit 1; }
-
-  local n
-  n=$(find "$COVERAGE_SRC" -name '*.gcda' -printf . | wc -c)
-  if [ "$n" -gt 0 ]; then
-    find "$COVERAGE_SRC" -name '*.gcda' -delete
-    echo "[coverage] cleared $n .gcda left by an earlier run"
-  fi
   echo "[coverage] $COVERAGE_SRC, build type '$build_type'"
+}
+
+# gcov merges into an existing .gcda, so anything left behind would be counted in this run.
+# This is the last step before CTP starts, because every instrumented binary the entrypoint
+# runs itself - cubrid_rel in the guards above - leaves a .gcda too, and those would make
+# run_lcov's "nothing was executed" check pass on a run that did nothing.
+function clear_gcda ()
+{
+  find "$COVERAGE_SRC" -name '*.gcda' -delete
+  if [ "${COVERAGE_STALE:-0}" -gt 0 ]; then
+    echo "[coverage] cleared $COVERAGE_STALE .gcda left by an earlier run"
+  fi
 }
 
 # cc4c reads the category out of the square brackets and picks files up by the "n_*.lcov"
@@ -682,6 +691,10 @@ function run_test ()
     export RQG_HOME
   fi
 
+  if [ -n "$CODE_COVERAGE" ]; then
+    clear_gcda
+  fi
+
   local ctp_ret=0
   ( cd "$WORKDIR" && HOME="$WORKDIR" "$CTP_HOME/bin/ctp.sh" "$CTP_CMD" -c "$CTP_HOME/$CTP_CONF" ) \
     || ctp_ret=$?
@@ -728,6 +741,11 @@ case "$1" in
   node)
     resolve_coverage
     prepare_node
+    # This node's own .gcda start here; the controller clears its own the same way.
+    if [ -n "$CODE_COVERAGE" ]; then
+      COVERAGE_STALE=$(find "$COVERAGE_SRC" -name '*.gcda' -printf . | wc -c)
+      clear_gcda
+    fi
     # Reaping zombies is PID 1's job; a shell in wait does it, 'sleep' alone does not.
     while :; do sleep 3600 & wait $!; done
     ;;
