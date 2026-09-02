@@ -161,6 +161,65 @@ function run_dist ()
     && ./build.sh -p $CUBRID $@ dist) | tee dist.log
 }
 
+# build.sh cannot package a coverage build: `dist` refuses the mode outright, and its source
+# package is built from `git ls-files`, which by construction leaves out the .gcno files and
+# the build directory .gitignore hides. The nightly does not use build.sh for this either --
+# cubrid-testtools-internal's run_coverage.sh just tars the two trees. So does this.
+#
+# The archives keep the guide's names, but the source tree keeps its own directory name
+# instead of the guide's cubrid-<build id>. Renaming it would put the tree at a different
+# path on the test node than it had here, and matching paths are what make GCOV_PREFIX and
+# lcov's geninfo_adjust_src_path unnecessary.
+function package_gcov ()
+{
+  local src version out=${GCOV_OUTPUT_DIR:-$PWD}
+  src=$(cd $CUBRID_SRCDIR && pwd) || return 1
+  version=$(cd "$src" && ./build.sh -v) || return 1
+  [ -n "$version" ] \
+    || { echo "** ERROR: build.sh -v printed no version" >&2; return 1; }
+
+  # ccache can serve objects from a build that was not instrumented. Without .gcno there is
+  # nothing for lcov to read, and the run would still look like it succeeded.
+  [ -n "$(find "$src" -name '*.gcno' -print -quit)" ] \
+    || { echo "** ERROR: no .gcno under $src; this is not a coverage build" >&2; return 1; }
+
+  mkdir -p "$out" || return 1
+  out=$(cd "$out" && pwd)
+  # tar cannot archive a directory it is writing into: the directory's own mtime changes
+  # while tar reads it and tar exits 1. Happens when the source is the working directory.
+  case "$out/" in
+    "$src"/*) echo "** ERROR: GCOV_OUTPUT_DIR ($out) is inside the source tree ($src);" \
+                   "point it somewhere else" >&2; return 1 ;;
+  esac
+
+  local plat=Linux.$(uname -m)
+  local build_tar=CUBRID-$version-gcov-$plat.tar.gz
+  local src_tar=cubrid-$version-gcov-src-$plat.tar.gz
+
+  # run_cubrid_install expects the databases directory to come with the build.
+  mkdir -p $CUBRID/databases
+
+  # .git is a third of the tree and no use to lcov; the build directory is, so it stays.
+  tar czf "$out/$src_tar" --exclude=.git -C "$(dirname "$src")" "$(basename "$src")" || return 1
+  tar czf "$out/$build_tar" -C "$(dirname $CUBRID)" "$(basename $CUBRID)" || return 1
+
+  echo "[coverage] $version -> $out"
+  local f
+  for f in "$build_tar" "$src_tar"; do
+    echo "  $(cd "$out" && du -h "$f")"
+  done
+  # The paths compiled into the .gcda have to exist on the test node, or lcov finds nothing.
+  echo "  built in $src; on the test node extract the source archive with" \
+       "'tar -C $(dirname "$src") -xzf $src_tar'"
+}
+
+function run_coverage ()
+{
+  # -m last so it wins over anything the caller passed.
+  run_build "$@" -m coverage || return 1
+  package_gcov
+}
+
 function run_default ()
 {
   run_build
@@ -181,6 +240,10 @@ case "$1" in
   dist)
     shift
     set -- run_dist "$@"
+    ;;
+  coverage)
+    shift
+    set -- run_coverage "$@"
     ;;
 esac
 
