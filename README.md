@@ -206,6 +206,10 @@ compiled into the binaries, and both images build and test under `/home`, so a t
 top-level directory is `cubrid`, so `tar -C /home -xzf <source archive>` is the whole of it.
 Point `$COVERAGE_SRC` elsewhere only if the build used a different path.
 
+**Unpack it, do not bind-mount a shared tree.** The run writes its `.gcda` into that tree, so
+two containers sharing one would mix their results, and the tree would be left dirty for the
+next run. Each container needs its own copy.
+
 `test` refuses a build that is not a coverage build — it reads the type out of `cubrid_rel`,
 which prints `coverage debug` for one. It also deletes any `.gcda` left by an earlier run,
 because gcov merges into an existing one and the two runs would be mixed together.
