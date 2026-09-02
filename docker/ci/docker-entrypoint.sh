@@ -161,15 +161,17 @@ function run_dist ()
     && ./build.sh -p $CUBRID $@ dist) | tee dist.log
 }
 
-# build.sh cannot package a coverage build: `dist` refuses the mode outright, and its source
-# package is built from `git ls-files`, which by construction leaves out the .gcno files and
-# the build directory .gitignore hides. The nightly does not use build.sh for this either --
-# cubrid-testtools-internal's run_coverage.sh just tars the two trees. So does this.
+# The nightly builds this the same way -- CTP's common/ext/run_coverage.sh runs
+# `build.sh -m coverage` -- but it does not package it with build.sh, and neither can this.
+# `dist` refuses the mode outright, and its source package is built from `git ls-files`, which
+# by construction leaves out the .gcno files and the build directory .gitignore hides. So the
+# archives are two plain tars, as they are there.
 #
-# The archives keep the guide's names, but the source tree keeps its own directory name
-# instead of the guide's cubrid-<build id>. Renaming it would put the tree at a different
-# path on the test node than it had here, and matching paths are what make GCOV_PREFIX and
-# lcov's geninfo_adjust_src_path unnecessary.
+# The names are the nightly's. The layout is not: it tars the trees from the inside, with no
+# top-level directory, and run_cubrid_install unpacks them into a cubrid-<build id> of its own
+# making. Keeping the tree's real directory name instead is what lets the test node put it back
+# at the path it was built at, which is what makes GCOV_PREFIX and lcov's
+# geninfo_adjust_src_path unnecessary. The consumer here is the test image, not that installer.
 function package_gcov ()
 {
   local src version out=${GCOV_OUTPUT_DIR:-$PWD}
