@@ -453,7 +453,7 @@ function clear_gcda ()
 {
   find "$COVERAGE_SRC" -name '*.gcda' -delete
   if [ "${COVERAGE_STALE:-0}" -gt 0 ]; then
-    echo "[coverage] cleared $COVERAGE_STALE .gcda left by an earlier run"
+    echo "[coverage] cleared $COVERAGE_STALE .gcda that were already in the tree"
   fi
 }
 
