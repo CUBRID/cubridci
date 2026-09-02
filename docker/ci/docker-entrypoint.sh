@@ -7,6 +7,7 @@ function usage ()
 Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh test [<category>]
        /entrypoint.sh node
+       /entrypoint.sh coverage
        /entrypoint.sh <command> [<args>...]
 
 <category> overrides $TEST_SUITE. One category per run.
@@ -26,6 +27,14 @@ need it on every host the controller does not run on. Required env:
 
 MEMORY_LEAK=yes runs 'test sql' and 'test medium' under valgrind. It also reads:
   MEMORY_SCENARIO   scenario path (default: the one the category's conf holds)
+
+CODE_COVERAGE=yes collects gcov data after 'test', for any category. It needs a
+coverage build injected at $CUBRID and that build's tree at the same path it was
+built at. It also reads:
+  COVERAGE_SRC      that source tree (default: $WORKDIR/cubrid)
+
+'coverage' collects on this container alone and writes no report of its own. The
+controller runs it on every node itself, so it is only for collecting by hand.
 EOF
 }
 
@@ -120,6 +129,19 @@ function resolve_category ()
     cciresult) XML_SRC="$CTP_HOME/result/$CTP_CMD" ;;
     status)    XML_SRC="$CTP_HOME/result/$CTP_CMD/current_runtime_logs" ;;
   esac
+}
+
+# Unlike a memory-leak run this needs no conf key and no category of its own: an instrumented
+# binary writes its .gcda by itself. So it lives outside resolve_category, and 'node' and
+# 'coverage' read it too.
+function resolve_coverage ()
+{
+  case "${CODE_COVERAGE,,}" in
+    ""|0|no|false|off) CODE_COVERAGE= ;;
+    1|yes|true|on)     CODE_COVERAGE=1 ;;
+    *) echo "** ERROR: CODE_COVERAGE must be yes or no, not '$CODE_COVERAGE'" >&2; exit 1 ;;
+  esac
+  COVERAGE_SRC=${COVERAGE_SRC:-$WORKDIR/cubrid}
 }
 
 # Drop the token on exit so the test step never sees a git credential.
@@ -225,7 +247,10 @@ function prepare_node ()
   # The shell runner works inside the case's own directory and saves a failing case under
   # ~/ERROR_BACKUP, so those have to belong to the node account too, not just CUBRID and CTP.
   local d
-  for d in "$CUBRID" "$WORKDIR"/cubrid-test* "$WORKDIR/ERROR_BACKUP" "$WORKDIR/do_not_delete_core"; do
+  # The node account runs the server, and an instrumented server writes its .gcda into the
+  # build tree, so that tree has to belong to the account as well.
+  for d in "$CUBRID" "$WORKDIR"/cubrid-test* "$WORKDIR/ERROR_BACKUP" "$WORKDIR/do_not_delete_core" \
+           ${CODE_COVERAGE:+"$COVERAGE_SRC"}; do
     [ -d "$d" ] || continue
     chown -R "$NODE_USER" "$d"
   done
@@ -239,6 +264,10 @@ function prepare_node ()
       echo "$v=${!v}"
     done
   } > /etc/environment
+
+  if [ -n "$CODE_COVERAGE" ]; then
+    mkdir -p "$TEST_REPORT" && chown "$NODE_USER" "$TEST_REPORT"
+  fi
 
   pgrep -x sshd >/dev/null || /usr/sbin/sshd
   echo "[node] $NODE_USER@$(hostname) ready"
@@ -323,11 +352,17 @@ EOF
 
 # A release build is -O2 -DNDEBUG with no -g, so whatever reads the run afterwards - a leak
 # report, a core - gets bare addresses out of it, and the run still finishes and passes.
+# cubrid_rel prints "(64bit <type> build for <os>)", where <type> is one of release, debug,
+# optdebug, coverage debug, profile debug or unknown (CMakeLists.txt BUILD_TYPE).
+function build_type_of ()
+{
+  "$CUBRID/bin/cubrid_rel" | sed -n 's/.*[0-9]\+bit \(.*\) build for.*/\1/p'
+}
+
 function require_debug_build ()
 {
-  local what=$1
-  local build_type
-  build_type=$("$CUBRID/bin/cubrid_rel" | sed -n 's/.*[0-9]\+bit \(.*\) build for.*/\1/p')
+  local what=$1 build_type
+  build_type=$(build_type_of)
   case "$build_type" in
     *debug*) ;;
     *) echo "** ERROR: $what needs a build with debug symbols;" \
@@ -381,6 +416,91 @@ function write_memory_conf ()
     || { echo "** ERROR: $CTP_CONF has enable_memory_leak='$got'; ini.sh did not write it" >&2; exit 1; }
 
   echo "[conf] $dst -> valgrind on, scenario $(ini.sh -s sql "$dst" scenario)"
+}
+
+# The .gcda paths are compiled into the binaries, so the tree has to sit where it was built.
+# gcov also merges into an existing .gcda, which would mix this run with whatever ran before.
+function check_coverage_env ()
+{
+  command -v lcov >/dev/null \
+    || { echo "** ERROR: lcov is not on PATH; a coverage run needs it" >&2; exit 1; }
+
+  local build_type
+  build_type=$(build_type_of)
+  case "$build_type" in
+    *coverage*) ;;
+    *) echo "** ERROR: a coverage run needs a build made with 'build.sh -m coverage';" \
+            "$CUBRID is a '${build_type:-unreadable}' build" >&2; exit 1 ;;
+  esac
+
+  [ -d "$COVERAGE_SRC" ] \
+    || { echo "** ERROR: no coverage source tree at $COVERAGE_SRC; unpack the gcov source" \
+              "archive so its tree lands there" >&2; exit 1; }
+  [ -n "$(find "$COVERAGE_SRC" -name '*.gcno' -print -quit)" ] \
+    || { echo "** ERROR: no .gcno under $COVERAGE_SRC; that tree is not from a coverage build" >&2; exit 1; }
+
+  local n
+  n=$(find "$COVERAGE_SRC" -name '*.gcda' -printf . | wc -c)
+  if [ "$n" -gt 0 ]; then
+    find "$COVERAGE_SRC" -name '*.gcda' -delete
+    echo "[coverage] cleared $n .gcda left by an earlier run"
+  fi
+  echo "[coverage] $COVERAGE_SRC, build type '$build_type'"
+}
+
+# cc4c reads the category out of the square brackets and picks files up by the "n_*.lcov"
+# glob, so a file named this way can be merged there unchanged.
+function lcov_name ()
+{
+  echo "cubrid_[${TEST_SUITE}]_${USER:-$(id -un)}-$(hostname -s)_$(date '+%Y%m%d%H%M%s').lcov"
+}
+
+function run_lcov ()
+{
+  local out=$1
+  [ -n "$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit)" ] \
+    || { echo "** ERROR: no .gcda under $COVERAGE_SRC; nothing was executed under gcov" >&2; return 1; }
+  # The system gcov matches the compiler both images carry; CTP bundles one built by an older
+  # gcc, which reads this data with a version warning.
+  lcov -q -d "$COVERAGE_SRC" -c -t cubrid -o "$out" || return 1
+  [ -s "$out" ] || { echo "** ERROR: lcov wrote nothing to $out" >&2; return 1; }
+}
+
+# Each node runs its own server, so the slave holds coverage the controller never sees. CTP
+# reaches its nodes by ssh with a password because jsch cannot do public keys, and this uses
+# the same account and password rather than adding a second way in.
+function collect_coverage_from_node ()
+{
+  local host=$1 remote
+  # CTP's ssh sessions get no Docker ENV at all (jsch runs a non-login shell), and this one
+  # is no different, so the remote side is told everything it needs on the command line.
+  remote=$(SSHPASS=$HA_NODE_PASSWORD sshpass -e ssh -n "$NODE_USER@$host" \
+             "CODE_COVERAGE=yes TEST_SUITE='$TEST_SUITE' TEST_REPORT='$TEST_REPORT'" \
+             "COVERAGE_SRC='$COVERAGE_SRC' /entrypoint.sh coverage") || return 1
+  remote=$(echo "$remote" | sed -n 's/^\[coverage\] wrote //p')
+  [ -n "$remote" ] \
+    || { echo "** ERROR: $host reported no lcov file" >&2; return 1; }
+
+  # Not scp: the file name carries the category in square brackets for cc4c, and OpenSSH 8's
+  # scp expands the remote path as a glob, so [ha_shell] becomes a character class and the
+  # name it sends back no longer matches the one asked for ("protocol error").
+  SSHPASS=$HA_NODE_PASSWORD sshpass -e ssh -n "$NODE_USER@$host" "cat '$remote'" \
+    > "$TEST_REPORT/$(basename "$remote")" || return 1
+  [ -s "$TEST_REPORT/$(basename "$remote")" ] \
+    || { echo "** ERROR: the lcov file copied from $host is empty" >&2; return 1; }
+  echo "[coverage] collected $(basename "$remote") from $host"
+}
+
+function collect_coverage ()
+{
+  mkdir -p "$TEST_REPORT"
+  local out="$TEST_REPORT/$(lcov_name)"
+  run_lcov "$out" || return 1
+  echo "[coverage] $(cd "$TEST_REPORT" && du -h "$(basename "$out")")"
+
+  if [ -n "$HA_TOPOLOGY" ]; then
+    collect_coverage_from_node "$HA_SLAVE_HOST" || return 1
+  fi
 }
 
 # $RUN_STAMP keeps reporting and judging off results left by earlier runs.
@@ -529,6 +649,11 @@ function run_test ()
   pgrep -x sshd >/dev/null || sudo /usr/sbin/sshd
   ulimit -c 10485760
 
+  # Before prepare_node, so a run that cannot be collected fails before it sets up any node.
+  if [ -n "$CODE_COVERAGE" ]; then
+    check_coverage_env
+  fi
+
   # This host is the controller and one of the nodes; the others run 'node'.
   if [ -n "$HA_TOPOLOGY" ]; then
     prepare_node
@@ -565,6 +690,10 @@ function run_test ()
     collect_memory || exit 1
   fi
 
+  if [ -n "$CODE_COVERAGE" ]; then
+    collect_coverage || exit 1
+  fi
+
   if [ "$ctp_ret" -ne 0 ]; then
     echo "** ERROR: CTP exited with $ctp_ret" >&2
     exit 1
@@ -582,9 +711,20 @@ case "$1" in
   test)
     shift; if [ -n "$1" ]; then TEST_SUITE=$1; fi
     resolve_category
+    resolve_coverage
     run_test
     ;;
+  coverage)
+    resolve_coverage
+    [ -n "$CODE_COVERAGE" ] \
+      || { echo "** ERROR: 'coverage' needs CODE_COVERAGE=yes" >&2; exit 1; }
+    out=$TEST_REPORT/$(lcov_name)
+    mkdir -p "$TEST_REPORT"
+    run_lcov "$out" || exit 1
+    echo "[coverage] wrote $out"
+    ;;
   node)
+    resolve_coverage
     prepare_node
     # Reaping zombies is PID 1's job; a shell in wait does it, 'sleep' alone does not.
     while :; do sleep 3600 & wait $!; done
