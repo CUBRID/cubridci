@@ -7,7 +7,7 @@ function usage ()
 Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh test [<category>]
        /entrypoint.sh node
-       /entrypoint.sh coverage
+       /entrypoint.sh coverage [<category>]
        /entrypoint.sh <command> [<args>...]
 
 <category> overrides $TEST_SUITE. One category per run.
@@ -33,8 +33,11 @@ coverage build injected at $CUBRID and that build's tree at the same path it was
 built at. It also reads:
   COVERAGE_SRC      that source tree (default: $WORKDIR/cubrid)
 
-'coverage' collects on this container alone and writes no report of its own. The
-controller runs it on every node itself, so it is only for collecting by hand.
+Both 'test' and 'coverage' stop CUBRID before reading the data: an instrumented
+process writes its .gcda only when it exits.
+
+'coverage' collects on this container alone. The controller runs it on every
+node itself, so it is only for collecting by hand.
 EOF
 }
 
@@ -83,13 +86,14 @@ function resolve_category ()
       TC_REPO=cubrid-testcases            CTP_CMD=ha_repl
       CTP_CONF=conf/ha_repl_ci.conf       REPORT_STYLE=status
       CONF_WRITER=write_ha_conf
-      HA_TOPOLOGY=1 ;;
+      HA_TOPOLOGY=1                       COVERAGE_NODES=$HA_SLAVE_HOST ;;
     ha_shell)
       TC_REPO=cubrid-testcases-private    CTP_CMD=shell
       CTP_CONF=conf/ha_shell_ci.conf      REPORT_STYLE=status
       CONF_WRITER=write_shell_conf
       SHELL_ROOT=$WORKDIR/$TC_REPO/HA/shell
-      SHELL_TIMEOUT=7200                  HA_TOPOLOGY=1 ;;
+      SHELL_TIMEOUT=7200                  HA_TOPOLOGY=1
+      COVERAGE_NODES=$HA_SLAVE_HOST ;;
     rqg)
       TC_REPO=cubrid-testcases-private    CTP_CMD=rqg
       CTP_CONF=conf/rqg_ci.conf           REPORT_STYLE=status
@@ -442,6 +446,13 @@ function check_coverage_env ()
             "$CUBRID is a '${build_type:-unreadable}' build" >&2; exit 1 ;;
   esac
 
+  # HA_TOPOLOGY only means "nodes need preparing" (the CONF_WRITER lesson), so the hosts to
+  # collect from are their own attribute. Without it a multi-node run would quietly report
+  # the controller's coverage alone.
+  [ -z "$HA_TOPOLOGY" ] || [ -n "$COVERAGE_NODES" ] \
+    || { echo "** ERROR: $TEST_SUITE prepares nodes but sets no COVERAGE_NODES;" \
+              "their coverage would be lost" >&2; exit 1; }
+
   echo "[coverage] $COVERAGE_SRC, build type '$build_type'"
 }
 
@@ -457,11 +468,24 @@ function clear_gcda ()
   fi
 }
 
-# cc4c reads the category out of the square brackets and picks files up by the "n_*.lcov"
-# glob, so a file named this way can be merged there unchanged.
+# The same name the nightly's collector builds, so the category stays legible. Note that cc4c
+# cannot merge these as they are: coverage_monitor.sh picks files up by a ".info" sidecar
+# naming them, and rewrites their SF paths against a "cubrid-<build id>" source directory that
+# this layout deliberately does not have.
 function lcov_name ()
 {
   echo "cubrid_[${TEST_SUITE}]_${USER:-$(id -un)}-$(hostname -s)_$(date '+%Y%m%d%H%M%s').lcov"
+}
+
+# An instrumented process writes its .gcda when it exits, and no runner reliably stops the
+# server: the SQL runner skips its own cleanup whenever it found a core (sql/bin/run.sh, the
+# "test_error=Y" branch), and the shell runner never stops anything at all - starting and
+# stopping is the case's job. Whatever is still running when this returns has written nothing,
+# and the container's exit kills it with SIGKILL, so the loss is permanent and invisible.
+# A leftover zombie can make `cubrid service stop` wait forever, hence the timeout.
+function stop_for_coverage ()
+{
+  timeout 300 "$CUBRID/bin/cubrid" service stop > /dev/null 2>&1 || true
 }
 
 function run_lcov ()
@@ -469,12 +493,27 @@ function run_lcov ()
   local out=$1
   [ -d "$COVERAGE_SRC" ] \
     || { echo "** ERROR: no coverage source tree at $COVERAGE_SRC" >&2; return 1; }
+
+  stop_for_coverage
+
   [ -n "$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit)" ] \
     || { echo "** ERROR: no .gcda under $COVERAGE_SRC; nothing was executed under gcov" >&2; return 1; }
   # The system gcov matches the compiler both images carry; CTP bundles one built by an older
   # gcc, which reads this data with a version warning.
   lcov -q -d "$COVERAGE_SRC" -c -t cubrid -o "$out" || return 1
   [ -s "$out" ] || { echo "** ERROR: lcov wrote nothing to $out" >&2; return 1; }
+
+  # Read after lcov, so the probe's own .gcda stays out of the file. Some cases install a
+  # release build over $CUBRID from ftp.cubrid.org and are in no exclude list - shell
+  # cbrd_26350 and ha_shell cbrd_24700, the latter on the slave too. Every case after one of
+  # those leaves no .gcda at all, and the data collected here still looks like a full run.
+  local build_type
+  build_type=$(build_type_of)
+  case "$build_type" in
+    *coverage*) ;;
+    *) echo "** ERROR: $CUBRID is a '${build_type:-unreadable}' build now, so a case replaced" \
+            "it during the run; $out holds only what ran before that" >&2; return 1 ;;
+  esac
 }
 
 # Each node runs its own server, so the slave holds coverage the controller never sees. CTP
@@ -509,9 +548,10 @@ function collect_coverage ()
   run_lcov "$out" || return 1
   echo "[coverage] $(cd "$TEST_REPORT" && du -h "$(basename "$out")")"
 
-  if [ -n "$HA_TOPOLOGY" ]; then
-    collect_coverage_from_node "$HA_SLAVE_HOST" || return 1
-  fi
+  local host
+  for host in $COVERAGE_NODES; do
+    collect_coverage_from_node "$host" || return 1
+  done
 }
 
 # $RUN_STAMP keeps reporting and judging off results left by earlier runs.
@@ -730,20 +770,29 @@ case "$1" in
     run_test
     ;;
   coverage)
+    shift; if [ -n "$1" ]; then TEST_SUITE=$1; fi
     resolve_coverage
     [ -n "$CODE_COVERAGE" ] \
       || { echo "** ERROR: 'coverage' needs CODE_COVERAGE=yes" >&2; exit 1; }
-    out=$TEST_REPORT/$(lcov_name)
+    # The category goes in the file name, and an empty one would name the file after no
+    # category at all.
+    [ -n "$TEST_SUITE" ] \
+      || { echo "** ERROR: 'coverage' needs a category (argument or \$TEST_SUITE)" >&2; exit 1; }
     mkdir -p "$TEST_REPORT"
+    out=$TEST_REPORT/$(lcov_name)
     run_lcov "$out" || exit 1
     echo "[coverage] wrote $out"
     ;;
   node)
     resolve_coverage
+    # The same guards the controller runs, so a node that cannot be collected from fails now
+    # and not hours later when the controller comes asking.
+    if [ -n "$CODE_COVERAGE" ]; then
+      check_coverage_env
+    fi
     prepare_node
     # This node's own .gcda start here; the controller clears its own the same way.
     if [ -n "$CODE_COVERAGE" ]; then
-      COVERAGE_STALE=$(find "$COVERAGE_SRC" -name '*.gcda' -printf . | wc -c)
       clear_gcda
     fi
     # Reaping zombies is PID 1's job; a shell in wait does it, 'sleep' alone does not.
