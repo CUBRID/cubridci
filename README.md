@@ -40,6 +40,7 @@ jdbc category compiles cases with javac.
 /entrypoint.sh checkout [<category>]
 /entrypoint.sh test [<category>]
 /entrypoint.sh node
+/entrypoint.sh coverage
 /entrypoint.sh <command> [<args>...]
 ```
 
@@ -50,6 +51,7 @@ One category per run. The argument overrides `$TEST_SUITE`; give it either way.
 | `checkout` | Clones `cubrid-testtools` and the category's test-cases repo into `/home`. Retries five times with a growing delay. `rqg` gets a third repo, narrowed to the one directory it needs. |
 | `test`     | Runs the category through CTP, collects JUnit XML, and judges the result.              |
 | `node`     | Prepares this container as a CTP node and waits. Needed on every host the controller does not run on. |
+| `coverage` | Writes an lcov file for this container alone. `test` runs it on every node itself, so it is only for collecting by hand. |
 
 `test` never checks out on its own — run `checkout` first. `$GHI_TOKEN` lives inside `checkout`
 only; the git credential is removed when `checkout` exits, so the test step never sees it.
@@ -177,6 +179,58 @@ $ nerdctl run --rm -v /path/to/CUBRID:/home/CUBRID \
     cubridci/cubridci:test_rl8.10 test
 ```
 
+### Code coverage runs
+
+`CODE_COVERAGE=yes` collects gcov data after the run, for **any** category. Unlike a
+memory-leak run it needs no conf key and is not a category of its own: the instrumented
+binaries write their `.gcda` by themselves.
+
+**It needs a coverage build, and that build's source tree.** Make both in the build image:
+
+```console
+$ nerdctl run --rm -v /shared:/out -e GCOV_OUTPUT_DIR=/out \
+    cubridci/cubridci:build_rl8.10 bash -lc '/entrypoint.sh checkout develop && /entrypoint.sh coverage'
+```
+
+That leaves two archives, named as the code coverage guide names them:
+
+| Archive                                     | Holds                                                  |
+| ------------------------------------------- | ------------------------------------------------------ |
+| `CUBRID-<version>-gcov-Linux.x86_64.tar.gz`     | the install tree — unpack it so it lands at `/home/CUBRID` |
+| `cubrid-<version>-gcov-src-Linux.x86_64.tar.gz` | the source tree with the `.gcno` — unpack it so it lands at `/home/cubrid` |
+
+**Unpack the source archive so its tree lands where it was built.** The `.gcda` paths are
+compiled into the binaries, and both images build and test under `/home`, so a tree at
+`/home/cubrid` needs no path rewriting at all — neither `GCOV_PREFIX` nor lcov's
+`geninfo_adjust_src_path`, which is all the nightly regression's rewriting is for. The archive's
+top-level directory is `cubrid`, so `tar -C /home -xzf <source archive>` is the whole of it.
+Point `$COVERAGE_SRC` elsewhere only if the build used a different path.
+
+`test` refuses a build that is not a coverage build — it reads the type out of `cubrid_rel`,
+which prints `coverage debug` for one. It also deletes any `.gcda` left by an earlier run,
+because gcov merges into an existing one and the two runs would be mixed together.
+
+One lcov file per node is collected into `$TEST_REPORT`, named
+`cubrid_[<category>]_<user>-<host>_<timestamp>.lcov`. That is the nightly regression's own
+naming, so the files can be dropped into cc4c's `result/<build>/new` directory and merged
+there unchanged. **Merging and publishing are outside this image** — it stops at the lcov file.
+
+For `ha_repl` and `ha_shell` the slave runs its own server, so it holds coverage the controller
+never sees. Give **every** node the same source tree at the same path and `CODE_COVERAGE=yes`;
+the controller then collects each node's file over ssh, with the same `qa` account and
+`$HA_NODE_PASSWORD` CTP itself uses, and a node it cannot reach fails the run.
+
+A coverage build is `-O0 --coverage`, so expect a run to take considerably longer than the same
+one on a release build.
+
+```console
+$ nerdctl run --rm -v /shared:/shared -e TEST_SUITE=medium -e CODE_COVERAGE=yes \
+    cubridci/cubridci:test_rl8.10 bash -lc '
+      tar -C /home -xzf /shared/CUBRID-*-gcov-Linux.x86_64.tar.gz &&
+      tar -C /home -xzf /shared/cubrid-*-gcov-src-Linux.x86_64.tar.gz &&
+      /entrypoint.sh checkout && /entrypoint.sh test'
+```
+
 ### Environment
 
 | Variable            | Default                    | Used by                                     |
@@ -192,6 +246,8 @@ $ nerdctl run --rm -v /path/to/CUBRID:/home/CUBRID \
 | `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long`, `test cci`, `test ha_shell`, `test rqg` — scenario path |
 | `MEMORY_LEAK`       | `no`                       | `test sql`, `test medium` — run under valgrind |
 | `MEMORY_SCENARIO`   | the one the category's conf holds | `test` with `MEMORY_LEAK=yes` — scenario path |
+| `CODE_COVERAGE`     | `no`                       | `test`, `node`, `coverage` — collect gcov data |
+| `COVERAGE_SRC`      | `/home/cubrid`             | `test`, `node`, `coverage` with `CODE_COVERAGE=yes` — the coverage build's source tree |
 
 Paths the image fixes: `$WORKDIR` = `/home`, `$CUBRID` = `/home/CUBRID`,
 `$CTP_HOME` = `/home/cubrid-testtools/CTP`. `test rqg` also sets
