@@ -174,9 +174,13 @@ function package_gcov ()
 {
   local src version out=${GCOV_OUTPUT_DIR:-$PWD}
   src=$(cd $CUBRID_SRCDIR && pwd) || return 1
+  # print_fatal is not silenced by -v, so a failure here comes back on stdout and would end
+  # up in the archive names. Only a version-shaped answer is accepted.
   version=$(cd "$src" && ./build.sh -v) || return 1
-  [ -n "$version" ] \
-    || { echo "** ERROR: build.sh -v printed no version" >&2; return 1; }
+  case "$version" in
+    [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+    *) echo "** ERROR: build.sh -v answered '$version', which is not a version" >&2; return 1 ;;
+  esac
 
   # ccache can serve objects from a build that was not instrumented. Without .gcno there is
   # nothing for lcov to read, and the run would still look like it succeeded.
