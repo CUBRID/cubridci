@@ -38,6 +38,7 @@ The entrypoint takes a verb. Anything that is not a verb runs as a command.
 /entrypoint.sh checkout [<ref>]
 /entrypoint.sh [build] [<build.sh args>...]   # build is the default verb
 /entrypoint.sh dist [<build.sh args>...]
+/entrypoint.sh coverage [<build.sh args>...]
 /entrypoint.sh <command> [<args>...]
 ```
 
@@ -50,6 +51,7 @@ arguments pass straight through to `build.sh`; run `./build.sh -h` for the list.
 | Source tree  | `checkout` puts it in `./cubrid`; mounting your own at `/home/cubrid` also works |
 | Install tree | `$CUBRID` = `/home/CUBRID`                                                 |
 | Packages     | `dist -o <dir>` writes the packages into `<dir>`                            |
+| gcov archives| `coverage` writes them into `$GCOV_OUTPUT_DIR` (default: the working directory) |
 | Logs         | `build.log` and `dist.log` in the working directory                        |
 
 The exit code is 0 on success and non-zero on failure. On a build failure the last 500 lines of
@@ -153,6 +155,45 @@ docker run --rm \
   -v "$PWD/packages:/packages" \
   cubridci/cubridci:build_rl8.10 dist -o /packages
 ```
+
+### Coverage builds
+
+`coverage` makes a `-m coverage` build and packs the two archives the
+[code coverage guide](https://github.com/CUBRID/cubrid-testtools/blob/develop/doc/code_coverage_guide.md)
+asks for. `-m coverage` is forced, so anything else the caller passes for `-m` is overridden.
+
+```bash
+docker run --rm \
+  -v "$PWD/workspace:/home" \
+  -v "$PWD/gcov:/gcov" \
+  -e GCOV_OUTPUT_DIR=/gcov \
+  cubridci/cubridci:build_rl8.10 \
+  bash -lc '/entrypoint.sh checkout && /entrypoint.sh coverage'
+```
+
+| Archive                                         | Holds                                          |
+| ----------------------------------------------- | ---------------------------------------------- |
+| `CUBRID-<version>-gcov-Linux.x86_64.tar.gz`     | the install tree, top-level directory `CUBRID` |
+| `cubrid-<version>-gcov-src-Linux.x86_64.tar.gz` | the source tree with the `.gcno` and the objects, top-level directory `cubrid` |
+
+`dist` cannot do this, and is not the thing to fix. It refuses `-m coverage` outright, and its
+source package is built from `git ls-files`, which by construction leaves out both the `.gcno`
+files and the build directory `.gitignore` hides. The nightly regression does not use `build.sh`
+for it either — `run_coverage.sh` in `cubrid-testtools-internal` just tars the two trees.
+
+**Unpack the source archive on the test node so its tree lands at the path it was built at.**
+The `.gcda` paths are compiled into the binaries. The build and test images both work under
+`/home`, so a `checkout` here and a `tar -C /home -xzf <source archive>` there line up exactly,
+and lcov then needs neither `GCOV_PREFIX` nor `geninfo_adjust_src_path`. `coverage` prints the
+path it built at and the `tar` line to use. The archive keeps the tree's own directory name
+rather than the guide's `cubrid-<build id>`, precisely so the paths can line up.
+
+`GCOV_OUTPUT_DIR` has to be outside the source tree — tar cannot archive a directory it is
+writing into. The default working directory `/home` is fine, since the tree sits at
+`/home/cubrid`; a source tree mounted at `/home` itself needs this set somewhere else.
+
+Coverage objects are much bigger than release ones, and the source archive carries the whole
+build directory, so leave room for it on whatever volume `$GCOV_OUTPUT_DIR` points at.
 
 ### Parallelism on a memory-tight host
 
