@@ -22,7 +22,7 @@ Jenkins itself is reachable only from the internal network.
 |            |                                                                                       |
 | ---------- | ------------------------------------------------------------------------------------- |
 | Base       | `rockylinux/rockylinux:8.10`                                                           |
-| Size       | 780 MB on disk, 265 MiB to pull                                                        |
+| Size       | 786 MB on disk, 266 MiB to pull                                                        |
 | Runtime    | JDK 8 (`java-1.8.0-openjdk-devel`), gcc/g++, make, gdb, git, valgrind                   |
 | Tools      | csh, expect, dos2unix, lcov, bc, jq, lsof, file, diffutils, net-tools, telnet, wget    |
 | ssh        | `openssh-server` with host keys generated; CTP reaches nodes and shell cases over ssh   |
@@ -47,7 +47,7 @@ One category per run. The argument overrides `$TEST_SUITE`; give it either way.
 
 | Verb       | What it does                                                                         |
 | ---------- | ------------------------------------------------------------------------------------ |
-| `checkout` | Clones `cubrid-testtools` and the category's test-cases repo into `/home`. Retries five times with a growing delay. |
+| `checkout` | Clones `cubrid-testtools` and the category's test-cases repo into `/home`. Retries five times with a growing delay. `rqg` gets a third repo, narrowed to the one directory it needs. |
 | `test`     | Runs the category through CTP, collects JUnit XML, and judges the result.              |
 | `node`     | Prepares this container as a CTP node and waits. Needed on every host the controller does not run on. |
 
@@ -68,9 +68,10 @@ only; the git credential is removed when `checkout` exits, so the test step neve
 | `jdbc`        | `cubrid-testcases-private`    | **yes**     | 2,407           | about 3 min   | yes       |
 | `ha_repl`     | `cubrid-testcases`            | no          | scenario-driven | see below     | no        |
 | `ha_shell`    | `cubrid-testcases-private`    | **yes**     | 373 case dirs   | see below     | yes       |
+| `rqg`         | `cubrid-testcases-private`    | **yes**     | 104             | hours (est.)  | yes       |
 
-`shell`, `shell_heavy`, `shell_long`, `isolation` and `ha_shell` are too slow to run whole in
-one run; split them by scenario directory. The other categories finish in one run.
+`shell`, `shell_heavy`, `shell_long`, `isolation`, `ha_shell` and `rqg` are too slow to run
+whole in one run; split them by scenario directory. The other categories finish in one run.
 
 `shell_heavy` and `shell_long` are the shell runner over other case trees — `shell_heavy` for
 cases that need a lot of disk or memory, `shell_long` for cases that take an hour or more
@@ -92,6 +93,43 @@ as that instance's `relatedhosts`; the ports and the HA port come from the `defa
 inherits. Each case builds its own HA pair by calling `setup_ha_environment` from
 `$init_path/make_ha.sh`, which reaches the slave over ssh. `$SHELL_SCENARIO` runs part of the
 tree, and the report is `test-ha_shell.xml` under `result/shell/`.
+
+`rqg` generates random queries against a database and checks that the server survives them.
+It is the shell runner again — CTP routes `rqg` through it and only splits the result directory
+apart — so its conf comes from `conf/shell_ci.conf` like the other shell variants, with the
+nightly regression's case timeout of 36,000 s and its exclude list,
+`random_query_generator/config/daily_regression_test_exclude_list_RQG.conf`, which is empty
+upstream — so nothing is excluded, and the one known failure below is enough to make a
+whole-tree run exit 1.
+`$SHELL_SCENARIO` runs part of the tree. Results land under `result/rqg/`, and the report is
+`test-rqg.xml`.
+
+The generator itself is not in the test-cases repo. It is perl, it lives in
+`cubrid-testtools-internal`, and `checkout rqg` fetches that repo too; `test rqg` points
+`$RQG_HOME` at it. That repo is 1.1 GB and rqg needs 5.5 MB of it, so the clone is filtered
+down to `random_query_generator` alone; `--depth 1` by itself still fetches every blob at that
+depth.
+The tool reaches CUBRID from perl through `DBI` and `DBD::cubrid`, both of which the image
+carries. `checkout` also patches one line of the tool: `GenTest/Properties.pm` uses
+`defined(@array)`, which perl 5.22 turned into a fatal error, so the tool cannot start
+unpatched. If the patch ever finds nothing left to do because the tool was fixed upstream,
+`checkout` still succeeds — it checks the file, not the edit.
+
+**`rqg` needs a build with debug symbols**, the same as a memory-leak run. Its cases kill the
+server in the middle of a run and then count the cores it left, and the `fault_injection` cases
+hand those cores to CTP's `analyzer.sh`, which comes with the `cubrid-testtools` checkout and
+is already on `$PATH`; a release build is `-O2 -DNDEBUG` with no `-g`, so nothing readable comes
+out of them and the run passes anyway. `test` reads the build type out of
+`cubrid_rel` and refuses anything that is not a `debug` or `optdebug` build. Inject what the CI
+publishes as its debug artifact.
+
+**Inject a fresh CUBRID for every rqg run.** The runner deletes
+`$CUBRID/lib/libcubrid_all_locales.so` before each case, so a build whose
+`conf/cubrid_locales.txt` still lists locales loses the library those entries need and
+`createdb` fails — with a locale error, then a chain of connection failures that read like
+something else entirely. A freshly installed build has that file empty, so this only bites when
+one build is reused across runs. The image cannot prevent it: pre-building the library does not
+help when the runner removes it, and `conf/` is restored from the runner's own snapshot.
 
 `ha_repl` and `ha_shell` need two hosts. Every other category runs in a single container.
 
@@ -131,27 +169,28 @@ $ nerdctl run --rm -v /path/to/CUBRID:/home/CUBRID \
 | Variable            | Default                    | Used by                                     |
 | ------------------- | -------------------------- | ------------------------------------------- |
 | `TEST_SUITE`        | (empty)                    | `checkout`, `test` — the category           |
-| `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — `cubrid-testtools` branch      |
+| `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — branch of `cubrid-testtools`, and of `cubrid-testtools-internal` for `rqg` |
 | `BRANCH_TESTCASES`  | `develop`                  | `checkout` — test-cases branch              |
-| `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long`, `jdbc` and `ha_shell` |
+| `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long`, `jdbc`, `ha_shell` and `rqg` |
 | `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML is collected       |
 | `HA_NODE_PASSWORD`  | (unset)                    | `node`, and `test ha_repl` / `test ha_shell` — password for the `qa` account |
 | `HA_SLAVE_HOST`     | (unset)                    | `test ha_repl`, `test ha_shell` — hostname of the slave node |
 | `HA_SCENARIO`       | `/home/cubrid-testcases/sql` | `test ha_repl` — scenario path             |
-| `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long`, `test ha_shell` — scenario path |
+| `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long`, `test ha_shell`, `test rqg` — scenario path |
 | `MEMORY_LEAK`       | `no`                       | `test sql`, `test medium` — run under valgrind |
 | `MEMORY_SCENARIO`   | the one the category's conf holds | `test` with `MEMORY_LEAK=yes` — scenario path |
 
 Paths the image fixes: `$WORKDIR` = `/home`, `$CUBRID` = `/home/CUBRID`,
-`$CTP_HOME` = `/home/cubrid-testtools/CTP`.
+`$CTP_HOME` = `/home/cubrid-testtools/CTP`. `test rqg` also sets
+`$RQG_HOME` = `/home/cubrid-testtools-internal/random_query_generator`.
 
 ### Result and exit code
 
 `test` exits 0 when every case passed and 1 otherwise. It does not trust CTP's own exit code —
 several runners return 0 even when cases fail, or when java died with an exception. The verdict
 comes from the runner's own result file: `summary_info` for sql and medium, `summary.info` for
-sql_by_cci, `test_status.data` for the four shell categories, isolation, jdbc and ha_repl. A
-run in which no case started is a failure, not a pass.
+sql_by_cci, `test_status.data` for the four shell categories, isolation, jdbc, ha_repl and rqg.
+A run in which no case started is a failure, not a pass.
 
 JUnit XML from the run is copied into `$TEST_REPORT`. Three categories write no XML —
 isolation, sql_by_cci and ha_repl — and for those `test` prints one warning line and judges the
@@ -297,6 +336,7 @@ to spare.
 | `ha_repl`    | 202 cases in the nightly exclude list                                | Excluded automatically. |
 | `ha_shell`   | `_40_guava/cbrd_26062`                                               | Its answer file has no room for the connect error the master's `copylogdb` prints while the case keeps the slave stopped, and the case blanks JSON values only, so the message survives the diff. |
 | `ha_shell`   | `_22_ha/bug_xdbms2760`                                               | The case waits 200 s and then counts rows, but its writer script ends by dropping the table; on hardware this fast the writer finishes first and the count finds no table. |
+| `rqg`        | `_02_issues/bug_bts_16290`                                           | Its `checkdb_catalogs.txt` names catalog classes without an owner qualifier, which `cubrid checkdb -i` has rejected since owner-qualified names arrived. It is the only case that passes `-i`. Only 17 of the 104 cases have been run here, so this list is not exhaustive. |
 
 **`sql_by_cci` compares against a different answer file.** Where a case has an `.answer_cci`
 next to it, the cci runner uses that instead of `.answer` — the cases whose cci output differs
