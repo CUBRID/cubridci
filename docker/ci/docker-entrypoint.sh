@@ -204,7 +204,10 @@ function package_gcov ()
   mkdir -p $CUBRID/databases
 
   # .git is a third of the tree and no use to lcov; the build directory is, so it stays.
-  tar czf "$out/$src_tar" --exclude=.git -C "$(dirname "$src")" "$(basename "$src")" || return 1
+  # The .gcda are this build's own coverage - build.sh runs instrumented binaries of its own,
+  # which left 376 of them here in the first real build - and a test run must not count them.
+  tar czf "$out/$src_tar" --exclude=.git --exclude='*.gcda' \
+      -C "$(dirname "$src")" "$(basename "$src")" || return 1
   tar czf "$out/$build_tar" -C "$(dirname $CUBRID)" "$(basename $CUBRID)" || return 1
 
   echo "[coverage] $version -> $out"
