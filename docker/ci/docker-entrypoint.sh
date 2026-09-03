@@ -435,8 +435,7 @@ function check_coverage_env ()
   [ -n "$(find "$COVERAGE_SRC" -name '*.gcno' -print -quit)" ] \
     || { echo "** ERROR: no .gcno under $COVERAGE_SRC; that tree is not from a coverage build" >&2; exit 1; }
 
-  # Counted before the build-type probe, which runs an instrumented binary of its own.
-  # clear_gcda reports it, once the caller gets that far.
+  # Before the build-type probe below, which runs an instrumented binary of its own.
   COVERAGE_STALE=$(find "$COVERAGE_SRC" -name '*.gcda' -printf . | wc -c)
 
   local build_type
@@ -447,12 +446,10 @@ function check_coverage_env ()
             "$CUBRID is a '${build_type:-unreadable}' build" >&2; exit 1 ;;
   esac
 
-  # Two archives from different builds put .gcno and binaries out of step. geninfo warns about
-  # each mismatched file and skips it, so the result is a small but valid lcov and a clean exit.
-  # The generated version.h carries the serial the install tree reports.
+  # Two archives from different builds put .gcno and binaries out of step, and geninfo answers by
+  # skipping each mismatched file - a small but valid lcov, and a clean exit. Only the generated
+  # version.h carries the serial. Take the first match: $(echo ...) would join two into a string.
   local vh src_version
-  # Deliberately the first match: $(echo ...) would join two of them into one string and the
-  # guard would then skip itself.
   set -- "$COVERAGE_SRC"/build_*_coverage/version.h
   vh=$1
   if [ -f "$vh" ]; then
@@ -465,9 +462,8 @@ function check_coverage_env ()
     esac
   fi
 
-  # HA_TOPOLOGY only means "nodes need preparing" (the CONF_WRITER lesson), so the hosts to
-  # collect from are their own attribute. Without it a multi-node run would quietly report
-  # the controller's coverage alone.
+  # HA_TOPOLOGY only means "nodes need preparing" (the CONF_WRITER lesson), so the hosts to collect
+  # from are their own attribute. Without it a multi-node run reports the controller's alone.
   [ -z "$HA_TOPOLOGY" ] || [ -n "$COVERAGE_NODES" ] \
     || { echo "** ERROR: $TEST_SUITE prepares nodes but names none to collect from;" \
               "set HA_SLAVE_HOST" >&2; exit 1; }
@@ -475,14 +471,12 @@ function check_coverage_env ()
   echo "[coverage] $COVERAGE_SRC, build type '$build_type'"
 }
 
-# What matters is not how find reported the delete but whether anything is left: a leftover
-# .gcda is counted by the next run on this tree, whatever the reason it survived. The measured
-# failures - a write-denied directory, a read-only mount - are partial deletes.
+# What matters is not how find reported the delete but whether anything is left: a leftover .gcda
+# is counted by the next run on this tree, and the measured failures are partial deletes anyway.
 function delete_gcda ()
 {
   find "$COVERAGE_SRC" -name '*.gcda' -delete || true
-  # Separately, because a find that could not read the tree returns nothing too, and "nothing
-  # left" is the answer this is looking for.
+  # Checked apart from the delete, because a find that could not read the tree also returns nothing.
   local left
   left=$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit) \
     || { echo "** ERROR: cannot read $COVERAGE_SRC to confirm the .gcda are gone" >&2; return 1; }
@@ -491,11 +485,9 @@ function delete_gcda ()
               "data it did not produce" >&2; return 1; }
 }
 
-# gcov merges into an existing .gcda, so anything left behind would be counted in this run.
-# This is the last step before CTP starts, because an instrumented binary writes a .gcda for
-# every translation unit linked into it: one cubrid_rel, which the guards above run, leaves
-# 373 of them. Clearing any earlier would count those as this run's, and would leave
-# run_lcov's "nothing was executed" check passing on a run that did nothing.
+# gcov merges into an existing .gcda, so anything left behind is counted in this run. Last step
+# before CTP starts: the guards above run cubrid_rel, and one instrumented binary writes a .gcda
+# per translation unit linked into it - enough to satisfy run_lcov's "nothing was executed" check.
 function clear_gcda ()
 {
   delete_gcda || return 1
@@ -504,22 +496,17 @@ function clear_gcda ()
   fi
 }
 
-# The same name the nightly's collector builds, so the category stays legible. Note that cc4c
-# cannot merge these as they are: coverage_monitor.sh picks files up by a ".info" sidecar
-# naming them, and rewrites their SF paths against a "cubrid-<build id>" source directory that
-# this layout deliberately does not have.
+# The same name the nightly's collector builds, for the category in it. Only the name: cc4c picks
+# files up by a ".info" sidecar and rewrites their SF paths against a directory this layout has not.
 function lcov_name ()
 {
   # %s (epoch), not %S: the nightly collector's own format, and cc4c never reads the stamp.
   echo "cubrid_[${TEST_SUITE}]_${USER:-$(id -un)}-$(hostname -s)_$(date '+%Y%m%d%H%M%s').lcov"
 }
 
-# An instrumented process writes its .gcda when it exits, and no runner reliably stops the
-# server: the SQL runner skips its own cleanup whenever it found a core (sql/bin/run.sh, the
-# "test_error=Y" branch), and the shell runner never stops anything at all - starting and
-# stopping is the case's job. Whatever is still running when this returns has written nothing,
-# and the container's exit kills it with SIGKILL, so the loss is permanent and invisible.
-# A leftover zombie can make `cubrid service stop` wait forever, hence the timeout.
+# An instrumented process writes its .gcda when it exits, and no runner reliably stops the server:
+# the SQL runner skips its cleanup after a core, the shell runner leaves stopping to the case. What
+# still runs at the container's exit dies on SIGKILL. A zombie stalls the stop, hence the timeout.
 function stop_for_coverage ()
 {
   timeout 300 "$CUBRID/bin/cubrid" service stop > /dev/null 2>&1 || true
@@ -543,26 +530,17 @@ function run_lcov ()
 
   [ -n "$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit)" ] \
     || { echo "** ERROR: no .gcda under $COVERAGE_SRC; nothing was executed under gcov" >&2; return 1; }
-  # The system gcov matches the compiler both images carry; CTP bundles one built by an older
-  # gcc, which reads this data with a version warning.
-  #
-  # The system headers go afterwards, not through --no-external: that decides "external"
-  # against the base directory, and a .gcno that recorded a relative source name then resolves
-  # somewhere outside it and the whole file is dropped. Removing '/usr/*' cannot drop a product
-  # file, and it is cc4c's own first remove pattern. The pass also merges the duplicate records
-  # geninfo emits, one per object that included a header. Measured on a real medium run: 15,659
-  # source files down to 734 and 51 MB down to 8.2 MB, with the count of .c and .cpp files and
-  # the coverage totals unchanged. The rest of cc4c's patterns are publishing policy and stay
-  # out - this file is the raw product coverage.
+  # No --gcov-tool: the system gcov matches the compiler both images carry, unlike CTP's bundled
+  # one. The system headers come out afterwards rather than through --no-external, which judges
+  # "external" against the base directory and drops any file whose .gcno holds a relative name.
   lcov -q -d "$COVERAGE_SRC" -c -t cubrid -o "$out.all" || return 1
   [ -s "$out.all" ] \
     || { echo "** ERROR: lcov wrote nothing to $out.all" >&2; rm -f "$out.all"; return 1; }
   lcov -q -r "$out.all" '/usr/*' -o "$out" || { rm -f "$out.all" "$out"; return 1; }
   rm -f "$out.all"
   [ -s "$out" ] || { echo "** ERROR: lcov wrote nothing to $out" >&2; return 1; }
-  # Otherwise the only figure a reader gets is the file size, and this is what shows a run that
-  # collected far less than it should have. A newer lcov could word the summary differently and
-  # leave the sed matching nothing, so an empty result fails rather than passing silently.
+  # Otherwise the only figure a reader gets is the file size. A newer lcov could word its summary
+  # differently and leave the sed matching nothing, so an empty result fails rather than passes.
   local rate
   rate=$(lcov --summary "$out" 2>&1 | sed -n 's/^  \(lines\|functions\)/[coverage]   \1/p') \
     || { echo "** ERROR: lcov --summary failed on $out" >&2; return 1; }
@@ -570,17 +548,15 @@ function run_lcov ()
     || { echo "** ERROR: could not read a coverage rate out of 'lcov --summary $out'" >&2; return 1; }
   echo "$rate"
 
-  # Read after lcov, so the probe's own .gcda stays out of the file. Some cases install a
-  # release build over $CUBRID from ftp.cubrid.org and are in no exclude list - shell
-  # cbrd_26350 and ha_shell cbrd_24700, the latter on the slave too. Every case after one of
-  # those leaves no .gcda at all, and the data collected here still looks like a full run.
+  # Read after lcov, so the probe's own .gcda stays out of the file. Two cases install a release
+  # build over $CUBRID and are in no exclude list (shell cbrd_26350, ha_shell cbrd_24700, that one
+  # on the slave too); every case after them leaves no .gcda, yet the data still reads as a full run.
   local build_type
   build_type=$(build_type_of)
 
-  # Last, so that this leaves the tree as clean as it found it, including the .gcda the probe
-  # above just wrote. A node container outlives the run that used it: it clears its tree once
-  # at startup and never again, so without this a second run on the same node would count the
-  # first run's data, and the probe's leftovers alone would satisfy the check above.
+  # Last, so the tree is left as clean as it was found, the probe's own .gcda included. A node
+  # container outlives its run and clears the tree only at startup, so without this a second run
+  # on that node would count the first one's data.
   delete_gcda || return 1
 
   case "$build_type" in
@@ -605,9 +581,8 @@ function collect_coverage_from_node ()
   [ -n "$remote" ] \
     || { echo "** ERROR: $host reported no lcov file" >&2; return 1; }
 
-  # Not scp: the file name carries the category in square brackets, and OpenSSH 8's scp expands
-  # the remote path as a glob, so [ha_shell] becomes a character class and the name it sends
-  # back no longer matches the one asked for ("protocol error").
+  # Not scp: the name carries the category in square brackets, and OpenSSH 8's scp globs the remote
+  # path, so [ha_shell] becomes a character class and the name comes back changed ("protocol error").
   SSHPASS=$HA_NODE_PASSWORD sshpass -e ssh -n "$NODE_USER@$host" "cat '$remote'" \
     > "$TEST_REPORT/$(basename "$remote")" || return 1
   [ -s "$TEST_REPORT/$(basename "$remote")" ] \
@@ -762,14 +737,9 @@ function judge_status ()
 
 function run_test ()
 {
-  # Here and not in resolve_coverage: MEMORY_LEAK is normalised by resolve_category, which
-  # 'node' and 'coverage' do not call, and a plain MEMORY_LEAK=no would read as on there.
-  #
-  # Nothing to gain from the pair, and one way to lose: memcheck multiplies a run that is
-  # already 7.5 times slower, and a shutdown that overruns stop_for_coverage's timeout leaves
-  # the server running with its .gcda unwritten. The instrumented binary does run under
-  # valgrind - run_memory.sh only puts a shim in front of it - so this refuses the pair rather
-  # than the data.
+  # Here and not in resolve_coverage: MEMORY_LEAK is normalised by resolve_category, which 'node'
+  # and 'coverage' do not call, and a plain MEMORY_LEAK=no would read as on there. The pair is
+  # refused for cost, not data: memcheck can overrun stop_for_coverage's timeout on a slower run.
   [ -z "$CODE_COVERAGE" ] || [ -z "$MEMORY_LEAK" ] \
     || { echo "** ERROR: CODE_COVERAGE and MEMORY_LEAK cannot both be on; run them separately" >&2; exit 1; }
 
