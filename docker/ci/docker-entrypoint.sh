@@ -480,8 +480,10 @@ function check_coverage_env ()
 # every translation unit linked into it: one cubrid_rel, which the guards above run, leaves
 # 373 of them. Clearing any earlier would count those as this run's, and would leave
 # run_lcov's "nothing was executed" check passing on a run that did nothing.
-# find in findutils 4.6 reports a -delete it could not carry out and still exits 0 - a
-# read-only mount of the tree does exactly that - so the tree is read back instead.
+# What matters is not how find reported the delete but whether anything is left: a leftover
+# .gcda is counted by the next run on this tree, whatever the reason it survived. Measured
+# failures - a write-denied directory, a read-only mount - are partial, so the check is for an
+# empty tree and not for the status of one command.
 function delete_gcda ()
 {
   find "$COVERAGE_SRC" -name '*.gcda' -delete || true
