@@ -248,7 +248,9 @@ that slow overruns the stop above, which puts the run back into the failure it e
 prevent.
 
 A coverage build is `-O0 --coverage`, so expect a run to take considerably longer than the same
-one on a release build — `medium` took 1,236 s against 164 s on a release build (measured).
+one on a release build — `medium` took 1,236 s against 164 s on a release build (measured), a
+factor of 7.5. At that factor `sql` is four to five hours and `isolation` is tens of hours, so
+a whole category in one container is not always practical even though every category works.
 The system headers are removed from the file afterwards. On the `medium` run above that took it
 from 15,659 source files to 734 and from 51 MB to 8.2 MB, leaving the `.c` and `.cpp` count and
 the coverage totals untouched — most of what goes is `/usr/include`, and the rest is the
