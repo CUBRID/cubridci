@@ -38,11 +38,12 @@ The entrypoint takes a verb. Anything that is not a verb runs as a command.
 /entrypoint.sh checkout [<ref>]
 /entrypoint.sh [build] [<build.sh args>...]   # build is the default verb
 /entrypoint.sh dist [<build.sh args>...]
+/entrypoint.sh coverage [<build.sh args>...]
 /entrypoint.sh <command> [<args>...]
 ```
 
-`build` and `dist` look for `build.sh` in the working directory, then in `cubrid/`, and run
-`./build.sh -p $CUBRID <args> clean build` or `./build.sh -p $CUBRID <args> dist`. Extra
+`build`, `dist` and `coverage` look for `build.sh` in the working directory, then in `cubrid/`,
+and run `./build.sh -p $CUBRID <args> clean build` or `./build.sh -p $CUBRID <args> dist`. Extra
 arguments pass straight through to `build.sh`; run `./build.sh -h` for the list.
 
 |              |                                                                            |
@@ -50,6 +51,7 @@ arguments pass straight through to `build.sh`; run `./build.sh -h` for the list.
 | Source tree  | `checkout` puts it in `./cubrid`; mounting your own at `/home/cubrid` also works |
 | Install tree | `$CUBRID` = `/home/CUBRID`                                                 |
 | Packages     | `dist -o <dir>` writes the packages into `<dir>`                            |
+| gcov archives| `coverage` writes them into `$GCOV_OUTPUT_DIR` (default: the working directory) |
 | Logs         | `build.log` and `dist.log` in the working directory                        |
 
 The exit code is 0 on success and non-zero on failure. On a build failure the last 500 lines of
@@ -153,6 +155,52 @@ docker run --rm \
   -v "$PWD/packages:/packages" \
   cubridci/cubridci:build_rl8.10 dist -o /packages
 ```
+
+### Coverage builds
+
+`coverage` makes a `-m coverage` build and packs the two archives the
+[code coverage guide](https://github.com/CUBRID/cubrid-testtools/blob/develop/doc/code_coverage_guide.md)
+asks for. `-m coverage` is forced, so anything else the caller passes for `-m` is overridden.
+
+```bash
+docker run --rm \
+  -v "$PWD/workspace:/home" \
+  -v "$PWD/gcov:/gcov" \
+  -e GCOV_OUTPUT_DIR=/gcov \
+  cubridci/cubridci:build_rl8.10 \
+  bash -lc '/entrypoint.sh checkout && /entrypoint.sh coverage'
+```
+
+| Archive                                         | Holds                                          |
+| ----------------------------------------------- | ---------------------------------------------- |
+| `CUBRID-<version>-gcov-Linux.x86_64.tar.gz`     | the install tree, top-level directory `CUBRID` |
+| `cubrid-<version>-gcov-src-Linux.x86_64.tar.gz` | the source tree with the `.gcno` and the objects, top-level directory `cubrid` |
+
+The nightly regression builds it the same way — CTP's `common/ext/run_coverage.sh` runs
+`build.sh -m coverage` — and packages it with two plain `tar` calls, which is what this does.
+`dist` cannot package it and is not the thing to fix: it refuses `-m coverage` outright, and its
+source package is built from `git ls-files`, which by construction leaves out both the `.gcno`
+files and the build directory `.gitignore` hides.
+
+**Unpack the source archive on the test node so its tree lands at the path it was built at.**
+The `.gcda` paths are compiled into the binaries. The build and test images both work under
+`/home`, so a `checkout` here and a `tar -C /home -xzf <source archive>` there line up exactly,
+and lcov then needs neither `GCOV_PREFIX` nor `geninfo_adjust_src_path`. `coverage` prints the
+path it built at and the `tar` line to use.
+
+The names are the nightly's; the layout is not. It tars the trees from the inside, with no
+top-level directory, and `run_cubrid_install` unpacks them into a `cubrid-<build id>` of its own
+making. Keeping the tree's real directory name instead is what lets the paths line up. The
+consumer here is the test image, not that installer.
+
+`GCOV_OUTPUT_DIR` has to be outside the source tree — tar cannot archive a directory it is
+writing into. The default working directory `/home` is fine, since the tree sits at
+`/home/cubrid`; a source tree mounted at `/home` itself needs this set somewhere else.
+
+Leave room on whatever volume `$GCOV_OUTPUT_DIR` points at. A full `develop` build measured
+241 MB for the install archive and 1.1 GB for the source one, from a 3.3 GB tree; the object
+files are 1.3 GB of that and the `.gcno` only 222 MB. The build itself took about 2.5 hours at
+`CMAKE_BUILD_PARALLEL_LEVEL=32`, most of it the third-party dependencies, which build serially.
 
 ### Parallelism on a memory-tight host
 
