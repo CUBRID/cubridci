@@ -42,8 +42,8 @@ The entrypoint takes a verb. Anything that is not a verb runs as a command.
 /entrypoint.sh <command> [<args>...]
 ```
 
-`build` and `dist` look for `build.sh` in the working directory, then in `cubrid/`, and run
-`./build.sh -p $CUBRID <args> clean build` or `./build.sh -p $CUBRID <args> dist`. Extra
+`build`, `dist` and `coverage` look for `build.sh` in the working directory, then in `cubrid/`,
+and run `./build.sh -p $CUBRID <args> clean build` or `./build.sh -p $CUBRID <args> dist`. Extra
 arguments pass straight through to `build.sh`; run `./build.sh -h` for the list.
 
 |              |                                                                            |

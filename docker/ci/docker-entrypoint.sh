@@ -161,13 +161,9 @@ function run_dist ()
     && ./build.sh -p $CUBRID $@ dist) | tee dist.log
 }
 
-# The nightly builds this the same way -- CTP's common/ext/run_coverage.sh runs
-# `build.sh -m coverage` -- but it does not package it with build.sh, and neither can this.
-# `dist` refuses the mode outright, and its source package is built from `git ls-files`, which
-# by construction leaves out the .gcno files and the build directory .gitignore hides. So the
-# archives are two plain tars, as they are there.
+# Two plain tars, as in CTP's common/ext/run_coverage.sh; see the README for why `dist` cannot.
 #
-# The names are the nightly's. The layout is not: it tars the trees from the inside, with no
+# The names are that script's. The layout is not: it tars the trees from the inside, with no
 # top-level directory, and run_cubrid_install unpacks them into a cubrid-<build id> of its own
 # making. Keeping the tree's real directory name instead is what lets the test node put it back
 # at the path it was built at, which is what makes GCOV_PREFIX and lcov's
@@ -175,9 +171,12 @@ function run_dist ()
 function package_gcov ()
 {
   local src version out=${GCOV_OUTPUT_DIR:-$PWD}
-  src=$(cd $CUBRID_SRCDIR && pwd) || return 1
-  # print_fatal is not silenced by -v, so a failure here comes back on stdout and would end
-  # up in the archive names. Only a version-shaped answer is accepted.
+  # $CUBRID_SRCDIR is where run_build found build.sh; only run_coverage calls this.
+  src=$(cd "$CUBRID_SRCDIR" && pwd) || return 1
+  # A tree whose history cannot be walked stamps the version 11.5.0.-<hash> and build.sh still
+  # exits 0. check_history refuses that before the build; this is the last stop before the name
+  # goes onto an archive. (A print_fatal cannot reach here -- it exits 1, which the line above
+  # catches.)
   version=$(cd "$src" && ./build.sh -v) || return 1
   case "$version" in
     [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
@@ -190,20 +189,22 @@ function package_gcov ()
     || { echo "** ERROR: no .gcno under $src; this is not a coverage build" >&2; return 1; }
 
   mkdir -p "$out" || return 1
-  out=$(cd "$out" && pwd)
+  out=$(cd "$out" && pwd) || return 1
   # tar cannot archive a directory it is writing into: the directory's own mtime changes
   # while tar reads it and tar exits 1. Happens when the source is the working directory.
   case "$out/" in
-    "$src"/*) echo "** ERROR: GCOV_OUTPUT_DIR ($out) is inside the source tree ($src);" \
-                   "point it somewhere else" >&2; return 1 ;;
+    "$src"/*)    echo "** ERROR: GCOV_OUTPUT_DIR ($out) is inside the source tree ($src);" \
+                      "point it somewhere else" >&2; return 1 ;;
+    "$CUBRID"/*) echo "** ERROR: GCOV_OUTPUT_DIR ($out) is inside the install tree ($CUBRID);" \
+                      "point it somewhere else" >&2; return 1 ;;
   esac
 
   local plat=Linux.$(uname -m)
   local build_tar=CUBRID-$version-gcov-$plat.tar.gz
   local src_tar=cubrid-$version-gcov-src-$plat.tar.gz
 
-  # run_cubrid_install expects the databases directory to come with the build.
-  mkdir -p $CUBRID/databases
+  # The same step that script takes right before its own binary tar (run_coverage.sh:145).
+  mkdir -p "$CUBRID/databases"
 
   # .git is a third of the tree and no use to lcov; the build directory is, so it stays.
   # The .gcda are this build's own coverage - build.sh runs instrumented binaries of its own,
