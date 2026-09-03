@@ -475,23 +475,27 @@ function check_coverage_env ()
   echo "[coverage] $COVERAGE_SRC, build type '$build_type'"
 }
 
+# What matters is not how find reported the delete but whether anything is left: a leftover
+# .gcda is counted by the next run on this tree, whatever the reason it survived. The measured
+# failures - a write-denied directory, a read-only mount - are partial deletes.
+function delete_gcda ()
+{
+  find "$COVERAGE_SRC" -name '*.gcda' -delete || true
+  # Separately, because a find that could not read the tree returns nothing too, and "nothing
+  # left" is the answer this is looking for.
+  local left
+  left=$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit) \
+    || { echo "** ERROR: cannot read $COVERAGE_SRC to confirm the .gcda are gone" >&2; return 1; }
+  [ -z "$left" ] \
+    || { echo "** ERROR: .gcda are still under $COVERAGE_SRC; a run on this tree would count" \
+              "data it did not produce" >&2; return 1; }
+}
+
 # gcov merges into an existing .gcda, so anything left behind would be counted in this run.
 # This is the last step before CTP starts, because an instrumented binary writes a .gcda for
 # every translation unit linked into it: one cubrid_rel, which the guards above run, leaves
 # 373 of them. Clearing any earlier would count those as this run's, and would leave
 # run_lcov's "nothing was executed" check passing on a run that did nothing.
-# What matters is not how find reported the delete but whether anything is left: a leftover
-# .gcda is counted by the next run on this tree, whatever the reason it survived. Measured
-# failures - a write-denied directory, a read-only mount - are partial, so the check is for an
-# empty tree and not for the status of one command.
-function delete_gcda ()
-{
-  find "$COVERAGE_SRC" -name '*.gcda' -delete || true
-  [ -z "$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit)" ] \
-    || { echo "** ERROR: .gcda are still under $COVERAGE_SRC; a run on this tree would count" \
-              "data it did not produce" >&2; return 1; }
-}
-
 function clear_gcda ()
 {
   delete_gcda || return 1
