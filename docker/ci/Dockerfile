@@ -11,9 +11,7 @@ ARG DBD_CUBRID_SHA256=1552e9b2bb93d8a32010f2bb77dc4f0c152971aed019ce42e494e86f24
 # perl-devel and ncurses-devel only build DBD::cubrid (the bundled CCI includes curses.h), and
 # Makefile.PL ignores a failed CCI build, so the static library is checked before make.
 # glibc-gconv-extra comes in with perl-devel and is not in the base image, so it goes back out.
-# sshpass is how the controller collects coverage from the other nodes: CTP reaches them with a
-# password because jsch cannot do public keys, and this reuses that account rather than adding
-# key auth just for this.
+# sshpass: the controller reaches the other nodes with CTP's own password account.
 RUN set -ex \
         && dnf install -y epel-release \
         && dnf install -y --setopt=tsflags=nodocs --setopt=install_weak_deps=False \

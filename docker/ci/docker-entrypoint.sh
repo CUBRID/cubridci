@@ -354,8 +354,8 @@ EOF
   echo "[conf] $CTP_HOME/$CTP_CONF -> $where"
 }
 
-# cubrid_rel prints "(64bit <type> build for <os>)", where <type> is one of release, debug,
-# optdebug, coverage debug, profile debug or unknown (CMakeLists.txt BUILD_TYPE).
+# <type> is one of release, debug, optdebug, coverage debug, profile debug or unknown
+# (CMakeLists.txt BUILD_TYPE).
 function build_type_of ()
 {
   "$CUBRID/bin/cubrid_rel" | sed -n 's/.*[0-9]\+bit \(.*\) build for.*/\1/p'
@@ -365,7 +365,8 @@ function build_type_of ()
 # report, a core - gets bare addresses out of it, and the run still finishes and passes.
 function require_debug_build ()
 {
-  local what=$1 build_type
+  local what=$1
+  local build_type
   build_type=$(build_type_of)
   case "$build_type" in
     *debug*) ;;
@@ -422,8 +423,7 @@ function write_memory_conf ()
   echo "[conf] $dst -> valgrind on, scenario $(ini.sh -s sql "$dst" scenario)"
 }
 
-# The .gcda paths are compiled into the binaries, so the tree has to sit where it was built,
-# and it has to be writable: gcov reports "profiling: <path>: Cannot open" and drops the data.
+# The .gcda paths are compiled into the binaries, so the tree has to sit where it was built.
 function check_coverage_env ()
 {
   command -v lcov >/dev/null \
@@ -436,7 +436,7 @@ function check_coverage_env ()
     || { echo "** ERROR: no .gcno under $COVERAGE_SRC; that tree is not from a coverage build" >&2; exit 1; }
 
   # Before the build-type probe below, which runs an instrumented binary of its own.
-  COVERAGE_STALE=$(find "$COVERAGE_SRC" -name '*.gcda' -printf . | wc -c)
+  COVERAGE_STALE_COUNT=$(find "$COVERAGE_SRC" -name '*.gcda' -printf . | wc -c)
 
   local build_type
   build_type=$(build_type_of)
@@ -452,18 +452,19 @@ function check_coverage_env ()
   local vh src_version
   set -- "$COVERAGE_SRC"/build_*_coverage/version.h
   vh=$1
-  if [ -f "$vh" ]; then
-    src_version=$(awk '/^#define (MAJOR|MINOR|PATCH|EXTRA)_VERSION /{v[$2]=$3}
-                       END{print v["MAJOR_VERSION"]"."v["MINOR_VERSION"]"."v["PATCH_VERSION"]"."v["EXTRA_VERSION"]}' "$vh")
-    case "$("$CUBRID/bin/cubrid_rel")" in
-      *"$src_version"*) ;;
-      *) echo "** ERROR: $COVERAGE_SRC is build $src_version but $CUBRID is not;" \
-              "the two gcov archives are from different builds" >&2; exit 1 ;;
-    esac
-  fi
+  [ -f "$vh" ] \
+    || { echo "** ERROR: no build_*_coverage/version.h under $COVERAGE_SRC;" \
+              "the two gcov archives cannot be checked against each other" >&2; exit 1; }
+  src_version=$(awk '/^#define (MAJOR|MINOR|PATCH|EXTRA)_VERSION /{v[$2]=$3}
+                     END{print v["MAJOR_VERSION"]"."v["MINOR_VERSION"]"."v["PATCH_VERSION"]"."v["EXTRA_VERSION"]}' "$vh")
+  case "$("$CUBRID/bin/cubrid_rel")" in
+    *"$src_version"*) ;;
+    *) echo "** ERROR: $COVERAGE_SRC is build $src_version but $CUBRID is not;" \
+            "the two gcov archives are from different builds" >&2; exit 1 ;;
+  esac
 
-  # HA_TOPOLOGY only means "nodes need preparing" (the CONF_WRITER lesson), so the hosts to collect
-  # from are their own attribute. Without it a multi-node run reports the controller's alone.
+  # HA_TOPOLOGY only means "nodes need preparing", so the hosts to collect from are their own
+  # attribute rather than inferred from it. Without it a multi-node run reports the controller's alone.
   [ -z "$HA_TOPOLOGY" ] || [ -n "$COVERAGE_NODES" ] \
     || { echo "** ERROR: $TEST_SUITE prepares nodes but names none to collect from;" \
               "set HA_SLAVE_HOST" >&2; exit 1; }
@@ -491,8 +492,8 @@ function delete_gcda ()
 function clear_gcda ()
 {
   delete_gcda || return 1
-  if [ "${COVERAGE_STALE:-0}" -gt 0 ]; then
-    echo "[coverage] cleared $COVERAGE_STALE .gcda that were already in the tree"
+  if [ "${COVERAGE_STALE_COUNT:-0}" -gt 0 ]; then
+    echo "[coverage] cleared $COVERAGE_STALE_COUNT .gcda that were already in the tree"
   fi
 }
 
@@ -513,19 +514,16 @@ function stop_for_coverage ()
   # The stop can fail or hit the timeout, and then the very thing this function exists to
   # prevent has happened. One other process's .gcda would be enough for the check below.
   local p
-  for p in cub_server cub_master cub_cas; do
+  for p in cub_server cub_master cub_broker cub_cas; do
     ! pgrep -x "$p" > /dev/null \
       || { echo "** ERROR: $p is still running after 'cubrid service stop';" \
                 "it never wrote its .gcda" >&2; return 1; }
   done
 }
 
-function run_lcov ()
+function capture_lcov ()
 {
   local out=$1
-  [ -d "$COVERAGE_SRC" ] \
-    || { echo "** ERROR: no coverage source tree at $COVERAGE_SRC" >&2; return 1; }
-
   stop_for_coverage || return 1
 
   [ -n "$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit)" ] \
@@ -539,31 +537,42 @@ function run_lcov ()
   lcov -q -r "$out.all" '/usr/*' -o "$out" || { rm -f "$out.all" "$out"; return 1; }
   rm -f "$out.all"
   [ -s "$out" ] || { echo "** ERROR: lcov wrote nothing to $out" >&2; return 1; }
-  # Otherwise the only figure a reader gets is the file size. A newer lcov could word its summary
-  # differently and leave the sed matching nothing, so an empty result fails rather than passes.
+  # The rate is the only figure that shows a run which collected far less than it should have. A
+  # newer lcov could word its summary differently and leave the sed matching nothing, which is no
+  # reason to fail a run whose file is sound.
   local rate
   rate=$(lcov --summary "$out" 2>&1 | sed -n 's/^  \(lines\|functions\)/[coverage]   \1/p') \
     || { echo "** ERROR: lcov --summary failed on $out" >&2; return 1; }
-  [ -n "$rate" ] \
-    || { echo "** ERROR: could not read a coverage rate out of 'lcov --summary $out'" >&2; return 1; }
-  echo "$rate"
+  if [ -n "$rate" ]; then
+    echo "$rate"
+  else
+    echo "** WARNING: could not read a coverage rate out of 'lcov --summary $out';" \
+         "the file itself is written" >&2
+  fi
 
   # Read after lcov, so the probe's own .gcda stays out of the file. Two cases install a release
   # build over $CUBRID and are in no exclude list (shell cbrd_26350, ha_shell cbrd_24700, that one
   # on the slave too); every case after them leaves no .gcda, yet the data still reads as a full run.
   local build_type
   build_type=$(build_type_of)
-
-  # Last, so the tree is left as clean as it was found, the probe's own .gcda included. A node
-  # container outlives its run and clears the tree only at startup, so without this a second run
-  # on that node would count the first one's data.
-  delete_gcda || return 1
-
   case "$build_type" in
     *coverage*) ;;
     *) echo "** ERROR: $CUBRID is a '${build_type:-unreadable}' build now, so a case replaced" \
             "it during the run; $out holds only what ran before that" >&2; return 1 ;;
   esac
+}
+
+# The tree is left clean whatever the outcome. A failed collection still leaves .gcda behind, and
+# a node container outlives its run and clears the tree only at startup, so the next run there
+# would count them. Not being able to collect by hand after a failure is the price.
+function run_lcov ()
+{
+  [ -d "$COVERAGE_SRC" ] \
+    || { echo "** ERROR: no coverage source tree at $COVERAGE_SRC" >&2; return 1; }
+  local rc=0
+  capture_lcov "$1" || rc=1
+  delete_gcda || rc=1
+  return $rc
 }
 
 # Each node runs its own server, so the slave holds coverage the controller never sees. CTP
@@ -572,8 +581,7 @@ function run_lcov ()
 function collect_coverage_from_node ()
 {
   local host=$1 remote
-  # CTP's ssh sessions get no Docker ENV at all (jsch runs a non-login shell), and this one
-  # is no different, so the remote side is told everything it needs on the command line.
+  # Same non-login shell as CTP's own sessions, so the remote side is told what it needs here.
   remote=$(SSHPASS=$HA_NODE_PASSWORD sshpass -e ssh -n "$NODE_USER@$host" \
              "CODE_COVERAGE=yes TEST_SUITE='$TEST_SUITE' TEST_REPORT='$TEST_REPORT'" \
              "COVERAGE_SRC='$COVERAGE_SRC' /entrypoint.sh coverage") || return 1
@@ -590,14 +598,26 @@ function collect_coverage_from_node ()
   echo "[coverage] collected $(basename "$remote") from $host"
 }
 
-function collect_coverage ()
+# The "wrote" line is how a node hands its path back to the controller, so it has to be printed
+# on every success, not only when this is reached through the verb.
+function run_coverage ()
 {
+  [ -n "$CODE_COVERAGE" ] \
+    || { echo "** ERROR: 'coverage' needs CODE_COVERAGE=yes" >&2; return 1; }
+  # The category goes in the file name, and an empty one would name the file after no category.
+  [ -n "$TEST_SUITE" ] \
+    || { echo "** ERROR: 'coverage' needs a category (argument or \$TEST_SUITE)" >&2; return 1; }
   mkdir -p "$TEST_REPORT" \
     || { echo "** ERROR: cannot create $TEST_REPORT" >&2; return 1; }
   local out="$TEST_REPORT/$(lcov_name)"
   run_lcov "$out" || return 1
   echo "[coverage] $(cd "$TEST_REPORT" && du -h "$(basename "$out")")"
+  echo "[coverage] wrote $out"
+}
 
+function collect_coverage ()
+{
+  run_coverage || return 1
   # Unquoted on purpose: COVERAGE_NODES is a space-separated list of hosts.
   local host
   for host in $COVERAGE_NODES; do
@@ -829,16 +849,7 @@ case "$1" in
   coverage)
     shift; if [ -n "$1" ]; then TEST_SUITE=$1; fi
     resolve_coverage
-    [ -n "$CODE_COVERAGE" ] \
-      || { echo "** ERROR: 'coverage' needs CODE_COVERAGE=yes" >&2; exit 1; }
-    # The category goes in the file name, and an empty one would name the file after no
-    # category at all.
-    [ -n "$TEST_SUITE" ] \
-      || { echo "** ERROR: 'coverage' needs a category (argument or \$TEST_SUITE)" >&2; exit 1; }
-    mkdir -p "$TEST_REPORT"
-    out=$TEST_REPORT/$(lcov_name)
-    run_lcov "$out" || exit 1
-    echo "[coverage] wrote $out"
+    run_coverage
     ;;
   node)
     resolve_coverage
@@ -848,7 +859,6 @@ case "$1" in
       check_coverage_env
     fi
     prepare_node
-    # This node's own .gcda start here; the controller clears its own the same way.
     if [ -n "$CODE_COVERAGE" ]; then
       clear_gcda
     fi
