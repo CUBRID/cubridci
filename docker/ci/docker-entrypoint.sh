@@ -480,11 +480,19 @@ function check_coverage_env ()
 # every translation unit linked into it: one cubrid_rel, which the guards above run, leaves
 # 373 of them. Clearing any earlier would count those as this run's, and would leave
 # run_lcov's "nothing was executed" check passing on a run that did nothing.
+# find in findutils 4.6 reports a -delete it could not carry out and still exits 0 - a
+# read-only mount of the tree does exactly that - so the tree is read back instead.
+function delete_gcda ()
+{
+  find "$COVERAGE_SRC" -name '*.gcda' -delete || true
+  [ -z "$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit)" ] \
+    || { echo "** ERROR: .gcda are still under $COVERAGE_SRC; a run on this tree would count" \
+              "data it did not produce" >&2; return 1; }
+}
+
 function clear_gcda ()
 {
-  find "$COVERAGE_SRC" -name '*.gcda' -delete \
-    || { echo "** ERROR: could not clear the .gcda under $COVERAGE_SRC;" \
-              "this run would count data it did not produce" >&2; return 1; }
+  delete_gcda || return 1
   if [ "${COVERAGE_STALE:-0}" -gt 0 ]; then
     echo "[coverage] cleared $COVERAGE_STALE .gcda that were already in the tree"
   fi
@@ -567,9 +575,7 @@ function run_lcov ()
   # above just wrote. A node container outlives the run that used it: it clears its tree once
   # at startup and never again, so without this a second run on the same node would count the
   # first run's data, and the probe's leftovers alone would satisfy the check above.
-  find "$COVERAGE_SRC" -name '*.gcda' -delete \
-    || { echo "** ERROR: could not clear the .gcda under $COVERAGE_SRC;" \
-              "the next run on this tree would count this one's data" >&2; return 1; }
+  delete_gcda || return 1
 
   case "$build_type" in
     *coverage*) ;;
