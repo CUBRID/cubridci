@@ -146,13 +146,6 @@ function resolve_coverage ()
     *) echo "** ERROR: CODE_COVERAGE must be yes or no, not '$CODE_COVERAGE'" >&2; exit 1 ;;
   esac
   COVERAGE_SRC=${COVERAGE_SRC:-$WORKDIR/cubrid}
-
-  # Nothing to gain, and one way to lose: memcheck multiplies a run that is already 7.5 times
-  # slower, and a shutdown that overruns stop_for_coverage's timeout leaves the server running
-  # with its .gcda unwritten. The instrumented binary does run under valgrind - run_memory.sh
-  # only puts a shim in front of it - so this refuses the pair rather than the data.
-  [ -z "$CODE_COVERAGE" ] || [ -z "$MEMORY_LEAK" ] \
-    || { echo "** ERROR: CODE_COVERAGE and MEMORY_LEAK cannot both be on; run them separately" >&2; exit 1; }
 }
 
 # Drop the token on exit so the test step never sees a git credential.
@@ -458,7 +451,10 @@ function check_coverage_env ()
   # each mismatched file and skips it, so the result is a small but valid lcov and a clean exit.
   # The generated version.h carries the serial the install tree reports.
   local vh src_version
-  vh=$(echo "$COVERAGE_SRC"/build_*_coverage/version.h)
+  # Deliberately the first match: $(echo ...) would join two of them into one string and the
+  # guard would then skip itself.
+  set -- "$COVERAGE_SRC"/build_*_coverage/version.h
+  vh=$1
   if [ -f "$vh" ]; then
     src_version=$(awk '/^#define (MAJOR|MINOR|PATCH|EXTRA)_VERSION /{v[$2]=$3}
                        END{print v["MAJOR_VERSION"]"."v["MINOR_VERSION"]"."v["PATCH_VERSION"]"."v["EXTRA_VERSION"]}' "$vh")
@@ -486,7 +482,9 @@ function check_coverage_env ()
 # run_lcov's "nothing was executed" check passing on a run that did nothing.
 function clear_gcda ()
 {
-  find "$COVERAGE_SRC" -name '*.gcda' -delete
+  find "$COVERAGE_SRC" -name '*.gcda' -delete \
+    || { echo "** ERROR: could not clear the .gcda under $COVERAGE_SRC;" \
+              "this run would count data it did not produce" >&2; return 1; }
   if [ "${COVERAGE_STALE:-0}" -gt 0 ]; then
     echo "[coverage] cleared $COVERAGE_STALE .gcda that were already in the tree"
   fi
@@ -545,11 +543,18 @@ function run_lcov ()
   lcov -q -d "$COVERAGE_SRC" -c -t cubrid -o "$out.all" || return 1
   [ -s "$out.all" ] \
     || { echo "** ERROR: lcov wrote nothing to $out.all" >&2; rm -f "$out.all"; return 1; }
-  lcov -q -r "$out.all" '/usr/*' -o "$out" || { rm -f "$out.all"; return 1; }
+  lcov -q -r "$out.all" '/usr/*' -o "$out" || { rm -f "$out.all" "$out"; return 1; }
   rm -f "$out.all"
   [ -s "$out" ] || { echo "** ERROR: lcov wrote nothing to $out" >&2; return 1; }
-  # Otherwise the only figure a reader gets is the file size.
-  lcov --summary "$out" 2>&1 | sed -n 's/^  \(lines\|functions\)/[coverage]   \1/p'
+  # Otherwise the only figure a reader gets is the file size, and this is what shows a run that
+  # collected far less than it should have. A newer lcov could word the summary differently and
+  # leave the sed matching nothing, so an empty result fails rather than passing silently.
+  local rate
+  rate=$(lcov --summary "$out" 2>&1 | sed -n 's/^  \(lines\|functions\)/[coverage]   \1/p') \
+    || { echo "** ERROR: lcov --summary failed on $out" >&2; return 1; }
+  [ -n "$rate" ] \
+    || { echo "** ERROR: could not read a coverage rate out of 'lcov --summary $out'" >&2; return 1; }
+  echo "$rate"
 
   # Read after lcov, so the probe's own .gcda stays out of the file. Some cases install a
   # release build over $CUBRID from ftp.cubrid.org and are in no exclude list - shell
@@ -562,7 +567,9 @@ function run_lcov ()
   # above just wrote. A node container outlives the run that used it: it clears its tree once
   # at startup and never again, so without this a second run on the same node would count the
   # first run's data, and the probe's leftovers alone would satisfy the check above.
-  find "$COVERAGE_SRC" -name '*.gcda' -delete
+  find "$COVERAGE_SRC" -name '*.gcda' -delete \
+    || { echo "** ERROR: could not clear the .gcda under $COVERAGE_SRC;" \
+              "the next run on this tree would count this one's data" >&2; return 1; }
 
   case "$build_type" in
     *coverage*) ;;
@@ -743,6 +750,17 @@ function judge_status ()
 
 function run_test ()
 {
+  # Here and not in resolve_coverage: MEMORY_LEAK is normalised by resolve_category, which
+  # 'node' and 'coverage' do not call, and a plain MEMORY_LEAK=no would read as on there.
+  #
+  # Nothing to gain from the pair, and one way to lose: memcheck multiplies a run that is
+  # already 7.5 times slower, and a shutdown that overruns stop_for_coverage's timeout leaves
+  # the server running with its .gcda unwritten. The instrumented binary does run under
+  # valgrind - run_memory.sh only puts a shim in front of it - so this refuses the pair rather
+  # than the data.
+  [ -z "$CODE_COVERAGE" ] || [ -z "$MEMORY_LEAK" ] \
+    || { echo "** ERROR: CODE_COVERAGE and MEMORY_LEAK cannot both be on; run them separately" >&2; exit 1; }
+
   [ -x "$CUBRID/bin/cubrid_rel" ] \
     || { echo "** ERROR: no CUBRID at $CUBRID; inject a build before running 'test'" >&2; exit 1; }
   [ -d "$CTP_HOME" ] \
