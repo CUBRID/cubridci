@@ -263,6 +263,10 @@ policy and stay out — this file is the raw product coverage.
 [coverage]   functions..: 48.9% (12376 of 25322 functions)
 ```
 
+That is one category on its own, so it reads low, and it is not the figure the guide publishes:
+that one is every category merged, with cc4c's publishing patterns removed as well. Do not
+compare it against the QA homepage one for one.
+
 ```console
 $ nerdctl run --rm -v /shared:/shared -e TEST_SUITE=medium -e CODE_COVERAGE=yes \
     cubridci/cubridci:test_rl8.10 bash -lc '
