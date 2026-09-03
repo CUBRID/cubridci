@@ -10,7 +10,7 @@ Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh <command> [<args>...]
 
 <category> overrides $TEST_SUITE. One category per run.
-Supported categories: sql, medium, shell, shell_heavy, shell_long, isolation,
+Supported categories: sql, medium, shell, shell_heavy, shell_long, cci, isolation,
                       sql_by_cci, jdbc, ha_repl, ha_shell, rqg
 
 'node' prepares this container as a CTP node and waits. Multi-node categories
@@ -20,7 +20,8 @@ need it on every host the controller does not run on. Required env:
   HA_SLAVE_HOST     hostname of the slave node
 'test ha_repl' also reads:
   HA_SCENARIO       scenario path (default: $WORKDIR/cubrid-testcases/sql)
-'test shell_heavy', 'test shell_long', 'test ha_shell' and 'test rqg' also read:
+'test shell_heavy', 'test shell_long', 'test cci', 'test ha_shell' and
+'test rqg' also read:
   SHELL_SCENARIO    scenario path (default: the whole category directory)
 
 MEMORY_LEAK=yes runs 'test sql' and 'test medium' under valgrind. It also reads:
@@ -53,6 +54,13 @@ function resolve_category ()
       CONF_WRITER=write_shell_conf
       SHELL_ROOT=$WORKDIR/$TC_REPO/longcase/shell
       SHELL_TIMEOUT=54000 ;;
+    cci)
+      TC_REPO=cubrid-testcases-private    CTP_CMD=shell
+      CTP_CONF=conf/cci_ci.conf           REPORT_STYLE=status
+      CONF_WRITER=write_shell_conf
+      SHELL_ROOT=$WORKDIR/$TC_REPO/interface/CCI/shell/_20_cci
+      SHELL_EXCLUDE=
+      SHELL_TIMEOUT=7200 ;;
     isolation)
       TC_REPO=cubrid-testcases            CTP_CMD=isolation
       CTP_CONF=conf/isolation.conf        REPORT_STYLE=status ;;
@@ -275,7 +283,10 @@ function write_shell_conf ()
     || { echo "** ERROR: $src not found; cannot derive $CTP_CONF" >&2; exit 1; }
 
   local scenario=${SHELL_SCENARIO:-$SHELL_ROOT}
-  local exclude=${SHELL_EXCLUDE:-$SHELL_ROOT/config/daily_regression_test_excluded_list_linux.conf}
+  # An empty SHELL_EXCLUDE is how a category says it has no exclude list, so only an unset one
+  # falls back to the usual path. CTP skips the file when the key is empty and fails on a
+  # missing one, so a category without a list has to leave the key empty, not point at nothing.
+  local exclude=${SHELL_EXCLUDE-$SHELL_ROOT/config/daily_regression_test_excluded_list_linux.conf}
   sed -e "s|^scenario=.*|scenario=$scenario|" \
       -e "s|^testcase_exclude_from_file=.*|testcase_exclude_from_file=$exclude|" \
       -e "s|^testcase_timeout_in_secs=.*|testcase_timeout_in_secs=$SHELL_TIMEOUT|" \
