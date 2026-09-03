@@ -51,7 +51,7 @@ One category per run. The argument overrides `$TEST_SUITE`; give it either way.
 | `checkout` | Clones `cubrid-testtools` and the category's test-cases repo into `/home`. Retries five times with a growing delay. `rqg` gets a third repo, narrowed to the one directory it needs. |
 | `test`     | Runs the category through CTP, collects JUnit XML, and judges the result.              |
 | `node`     | Prepares this container as a CTP node and waits. Needed on every host the controller does not run on. |
-| `coverage` | Writes an lcov file for this container alone. `test` runs it on every node itself, so it is only for collecting by hand. |
+| `coverage` | Writes an lcov file for this container alone. `test` collects the controller itself and runs this on the other nodes, so it is only for collecting by hand. |
 
 `test` never checks out on its own — run `checkout` first. `$GHI_TOKEN` lives inside `checkout`
 only; the git credential is removed when `checkout` exits, so the test step never sees it.
@@ -211,8 +211,10 @@ two containers sharing one would mix their results, and the tree would be left d
 next run. Each container needs its own copy.
 
 `test` refuses a build that is not a coverage build — it reads the type out of `cubrid_rel`,
-which prints `coverage debug` for one. It also deletes any `.gcda` left by an earlier run,
-because gcov merges into an existing one and the two runs would be mixed together.
+which prints `coverage debug` for one. Every container also clears its own tree of `.gcda`,
+because gcov merges into an existing one and the two runs would be mixed together: the
+controller before the run starts, and each container again once it has collected — a `node`
+container outlives the run that used it.
 
 **CUBRID is stopped before the data is read.** An instrumented process writes its `.gcda` only
 when it exits, and no runner reliably stops the server — the SQL runner skips its own cleanup
@@ -240,10 +242,17 @@ never sees. Give **every** node the same source tree at the same path and `CODE_
 the controller then collects each node's file over ssh, with the same `qa` account and
 `$HA_NODE_PASSWORD` CTP itself uses, and a node it cannot reach fails the run.
 
+`MEMORY_LEAK=yes` and `CODE_COVERAGE=yes` cannot both be on. There is nothing to gain — a
+coverage build is already 7.5 times slower and memcheck multiplies that again — and a shutdown
+that slow overruns the stop above, which puts the run back into the failure it exists to
+prevent.
+
 A coverage build is `-O0 --coverage`, so expect a run to take considerably longer than the same
 one on a release build — `medium` took 1,236 s against 164 s on a release build (measured).
-The lcov file is large for the same reason: 51 MB over 15,659 source files for that run, most
-of them system headers that cc4c drops at merge time.
+The system headers are removed from the file afterwards, which on a real build takes it from
+4,267 source files to 1,486 and halves the bytes. Nothing wants them, and cc4c strips the same
+`/usr/*` at merge time. The rest of cc4c's remove patterns are publishing policy and stay out —
+this file is the raw product coverage.
 
 ```console
 $ nerdctl run --rm -v /shared:/shared -e TEST_SUITE=medium -e CODE_COVERAGE=yes \
@@ -261,7 +270,7 @@ $ nerdctl run --rm -v /shared:/shared -e TEST_SUITE=medium -e CODE_COVERAGE=yes 
 | `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — branch of `cubrid-testtools`, and of `cubrid-testtools-internal` for `rqg` |
 | `BRANCH_TESTCASES`  | `develop`                  | `checkout` — test-cases branch              |
 | `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long`, `cci`, `jdbc`, `ha_shell` and `rqg` |
-| `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML is collected       |
+| `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML, leak reports and lcov files are collected; `node` creates it for the node account |
 | `HA_NODE_PASSWORD`  | (unset)                    | `node`, and `test ha_repl` / `test ha_shell` — password for the `qa` account |
 | `HA_SLAVE_HOST`     | (unset)                    | `test ha_repl`, `test ha_shell` — hostname of the slave node |
 | `HA_SCENARIO`       | `/home/cubrid-testcases/sql` | `test ha_repl` — scenario path             |

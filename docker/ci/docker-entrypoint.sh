@@ -30,7 +30,7 @@ MEMORY_LEAK=yes runs 'test sql' and 'test medium' under valgrind. It also reads:
 
 CODE_COVERAGE=yes collects gcov data after 'test', for any category. It needs a
 coverage build injected at $CUBRID and that build's tree at the same path it was
-built at. It also reads:
+built at. Every 'node' of a multi-node category needs it set too. It also reads:
   COVERAGE_SRC      that source tree (default: $WORKDIR/cubrid)
 
 Both 'test' and 'coverage' stop CUBRID before reading the data: an instrumented
@@ -146,6 +146,13 @@ function resolve_coverage ()
     *) echo "** ERROR: CODE_COVERAGE must be yes or no, not '$CODE_COVERAGE'" >&2; exit 1 ;;
   esac
   COVERAGE_SRC=${COVERAGE_SRC:-$WORKDIR/cubrid}
+
+  # Nothing to gain, and one way to lose: memcheck multiplies a run that is already 7.5 times
+  # slower, and a shutdown that overruns stop_for_coverage's timeout leaves the server running
+  # with its .gcda unwritten. The instrumented binary does run under valgrind - run_memory.sh
+  # only puts a shim in front of it - so this refuses the pair rather than the data.
+  [ -z "$CODE_COVERAGE" ] || [ -z "$MEMORY_LEAK" ] \
+    || { echo "** ERROR: CODE_COVERAGE and MEMORY_LEAK cannot both be on; run them separately" >&2; exit 1; }
 }
 
 # Drop the token on exit so the test step never sees a git credential.
@@ -250,9 +257,9 @@ function prepare_node ()
 
   # The shell runner works inside the case's own directory and saves a failing case under
   # ~/ERROR_BACKUP, so those have to belong to the node account too, not just CUBRID and CTP.
+  # And the node account runs the server, so on a coverage run the build tree it writes its
+  # .gcda into has to belong to it as well.
   local d
-  # The node account runs the server, and an instrumented server writes its .gcda into the
-  # build tree, so that tree has to belong to the account as well.
   for d in "$CUBRID" "$WORKDIR"/cubrid-test* "$WORKDIR/ERROR_BACKUP" "$WORKDIR/do_not_delete_core" \
            ${CODE_COVERAGE:+"$COVERAGE_SRC"}; do
     [ -d "$d" ] || continue
@@ -436,6 +443,7 @@ function check_coverage_env ()
     || { echo "** ERROR: no .gcno under $COVERAGE_SRC; that tree is not from a coverage build" >&2; exit 1; }
 
   # Counted before the build-type probe, which runs an instrumented binary of its own.
+  # clear_gcda reports it, once the caller gets that far.
   COVERAGE_STALE=$(find "$COVERAGE_SRC" -name '*.gcda' -printf . | wc -c)
 
   local build_type
@@ -446,12 +454,27 @@ function check_coverage_env ()
             "$CUBRID is a '${build_type:-unreadable}' build" >&2; exit 1 ;;
   esac
 
+  # Two archives from different builds put .gcno and binaries out of step. geninfo warns about
+  # each mismatched file and skips it, so the result is a small but valid lcov and a clean exit.
+  # The generated version.h carries the serial the install tree reports.
+  local vh src_version
+  vh=$(echo "$COVERAGE_SRC"/build_*_coverage/version.h)
+  if [ -f "$vh" ]; then
+    src_version=$(awk '/^#define (MAJOR|MINOR|PATCH|EXTRA)_VERSION /{v[$2]=$3}
+                       END{print v["MAJOR_VERSION"]"."v["MINOR_VERSION"]"."v["PATCH_VERSION"]"."v["EXTRA_VERSION"]}' "$vh")
+    case "$("$CUBRID/bin/cubrid_rel")" in
+      *"$src_version"*) ;;
+      *) echo "** ERROR: $COVERAGE_SRC is build $src_version but $CUBRID is not;" \
+              "the two gcov archives are from different builds" >&2; exit 1 ;;
+    esac
+  fi
+
   # HA_TOPOLOGY only means "nodes need preparing" (the CONF_WRITER lesson), so the hosts to
   # collect from are their own attribute. Without it a multi-node run would quietly report
   # the controller's coverage alone.
   [ -z "$HA_TOPOLOGY" ] || [ -n "$COVERAGE_NODES" ] \
-    || { echo "** ERROR: $TEST_SUITE prepares nodes but sets no COVERAGE_NODES;" \
-              "their coverage would be lost" >&2; exit 1; }
+    || { echo "** ERROR: $TEST_SUITE prepares nodes but names none to collect from;" \
+              "set HA_SLAVE_HOST" >&2; exit 1; }
 
   echo "[coverage] $COVERAGE_SRC, build type '$build_type'"
 }
@@ -475,6 +498,7 @@ function clear_gcda ()
 # this layout deliberately does not have.
 function lcov_name ()
 {
+  # %s (epoch), not %S: the nightly collector's own format, and cc4c never reads the stamp.
   echo "cubrid_[${TEST_SUITE}]_${USER:-$(id -un)}-$(hostname -s)_$(date '+%Y%m%d%H%M%s').lcov"
 }
 
@@ -487,6 +511,14 @@ function lcov_name ()
 function stop_for_coverage ()
 {
   timeout 300 "$CUBRID/bin/cubrid" service stop > /dev/null 2>&1 || true
+  # The stop can fail or hit the timeout, and then the very thing this function exists to
+  # prevent has happened. One other process's .gcda would be enough for the check below.
+  local p
+  for p in cub_server cub_master cub_cas; do
+    ! pgrep -x "$p" > /dev/null \
+      || { echo "** ERROR: $p is still running after 'cubrid service stop';" \
+                "it never wrote its .gcda" >&2; return 1; }
+  done
 }
 
 function run_lcov ()
@@ -495,14 +527,27 @@ function run_lcov ()
   [ -d "$COVERAGE_SRC" ] \
     || { echo "** ERROR: no coverage source tree at $COVERAGE_SRC" >&2; return 1; }
 
-  stop_for_coverage
+  stop_for_coverage || return 1
 
   [ -n "$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit)" ] \
     || { echo "** ERROR: no .gcda under $COVERAGE_SRC; nothing was executed under gcov" >&2; return 1; }
   # The system gcov matches the compiler both images carry; CTP bundles one built by an older
   # gcc, which reads this data with a version warning.
-  lcov -q -d "$COVERAGE_SRC" -c -t cubrid -o "$out" || return 1
+  #
+  # The system headers go afterwards, not through --no-external: that decides "external"
+  # against the base directory, and a .gcno that recorded a relative source name then resolves
+  # somewhere outside it and the file is dropped. Removing '/usr/*' cannot drop a product file,
+  # and it is cc4c's own first remove pattern. Measured on a real build: 4,267 source files
+  # down to 1,486, and half the bytes. The rest of cc4c's patterns are publishing policy and
+  # stay out - this file is the raw product coverage.
+  lcov -q -d "$COVERAGE_SRC" -c -t cubrid -o "$out.all" || return 1
+  [ -s "$out.all" ] \
+    || { echo "** ERROR: lcov wrote nothing to $out.all" >&2; rm -f "$out.all"; return 1; }
+  lcov -q -r "$out.all" '/usr/*' -o "$out" || { rm -f "$out.all"; return 1; }
+  rm -f "$out.all"
   [ -s "$out" ] || { echo "** ERROR: lcov wrote nothing to $out" >&2; return 1; }
+  # Otherwise the only figure a reader gets is the file size.
+  lcov --summary "$out" 2>&1 | sed -n 's/^  \(lines\|functions\)/[coverage]   \1/p'
 
   # Read after lcov, so the probe's own .gcda stays out of the file. Some cases install a
   # release build over $CUBRID from ftp.cubrid.org and are in no exclude list - shell
@@ -510,6 +555,13 @@ function run_lcov ()
   # those leaves no .gcda at all, and the data collected here still looks like a full run.
   local build_type
   build_type=$(build_type_of)
+
+  # Last, so that this leaves the tree as clean as it found it, including the .gcda the probe
+  # above just wrote. A node container outlives the run that used it: it clears its tree once
+  # at startup and never again, so without this a second run on the same node would count the
+  # first run's data, and the probe's leftovers alone would satisfy the check above.
+  find "$COVERAGE_SRC" -name '*.gcda' -delete
+
   case "$build_type" in
     *coverage*) ;;
     *) echo "** ERROR: $CUBRID is a '${build_type:-unreadable}' build now, so a case replaced" \
@@ -532,9 +584,9 @@ function collect_coverage_from_node ()
   [ -n "$remote" ] \
     || { echo "** ERROR: $host reported no lcov file" >&2; return 1; }
 
-  # Not scp: the file name carries the category in square brackets for cc4c, and OpenSSH 8's
-  # scp expands the remote path as a glob, so [ha_shell] becomes a character class and the
-  # name it sends back no longer matches the one asked for ("protocol error").
+  # Not scp: the file name carries the category in square brackets, and OpenSSH 8's scp expands
+  # the remote path as a glob, so [ha_shell] becomes a character class and the name it sends
+  # back no longer matches the one asked for ("protocol error").
   SSHPASS=$HA_NODE_PASSWORD sshpass -e ssh -n "$NODE_USER@$host" "cat '$remote'" \
     > "$TEST_REPORT/$(basename "$remote")" || return 1
   [ -s "$TEST_REPORT/$(basename "$remote")" ] \
@@ -544,11 +596,13 @@ function collect_coverage_from_node ()
 
 function collect_coverage ()
 {
-  mkdir -p "$TEST_REPORT"
+  mkdir -p "$TEST_REPORT" \
+    || { echo "** ERROR: cannot create $TEST_REPORT" >&2; return 1; }
   local out="$TEST_REPORT/$(lcov_name)"
   run_lcov "$out" || return 1
   echo "[coverage] $(cd "$TEST_REPORT" && du -h "$(basename "$out")")"
 
+  # Unquoted on purpose: COVERAGE_NODES is a space-separated list of hosts.
   local host
   for host in $COVERAGE_NODES; do
     collect_coverage_from_node "$host" || return 1
