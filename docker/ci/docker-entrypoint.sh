@@ -183,8 +183,9 @@ function package_gcov ()
     *) echo "** ERROR: build.sh -v answered '$version', which is not a version" >&2; return 1 ;;
   esac
 
-  # ccache can serve objects from a build that was not instrumented. Without .gcno there is
-  # nothing for lcov to read, and the run would still look like it succeeded.
+  # The mode is forced above, but this checks that it took effect rather than that it was
+  # asked for. Without .gcno there is nothing for lcov to read, and the archives would still
+  # go out under a name that says they carry coverage.
   [ -n "$(find "$src" -name '*.gcno' -print -quit)" ] \
     || { echo "** ERROR: no .gcno under $src; this is not a coverage build" >&2; return 1; }
 
