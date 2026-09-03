@@ -249,10 +249,19 @@ prevent.
 
 A coverage build is `-O0 --coverage`, so expect a run to take considerably longer than the same
 one on a release build — `medium` took 1,236 s against 164 s on a release build (measured).
-The system headers are removed from the file afterwards, which on a real build takes it from
-4,267 source files to 1,486 and halves the bytes. Nothing wants them, and cc4c strips the same
-`/usr/*` at merge time. The rest of cc4c's remove patterns are publishing policy and stay out —
-this file is the raw product coverage.
+The system headers are removed from the file afterwards. On the `medium` run above that took it
+from 15,659 source files to 734 and from 51 MB to 8.2 MB, leaving the `.c` and `.cpp` count and
+the coverage totals untouched — most of what goes is `/usr/include`, and the rest is the
+duplicate records lcov emits once per object that included a header. Nothing wants them, and
+cc4c strips the same `/usr/*` at merge time. The rest of cc4c's remove patterns are publishing
+policy and stay out — this file is the raw product coverage.
+
+`test` prints the rate it collected:
+
+```
+[coverage]   lines......: 38.2% (181577 of 474865 lines)
+[coverage]   functions..: 48.9% (12376 of 25322 functions)
+```
 
 ```console
 $ nerdctl run --rm -v /shared:/shared -e TEST_SUITE=medium -e CODE_COVERAGE=yes \

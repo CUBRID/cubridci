@@ -536,10 +536,12 @@ function run_lcov ()
   #
   # The system headers go afterwards, not through --no-external: that decides "external"
   # against the base directory, and a .gcno that recorded a relative source name then resolves
-  # somewhere outside it and the file is dropped. Removing '/usr/*' cannot drop a product file,
-  # and it is cc4c's own first remove pattern. Measured on a real build: 4,267 source files
-  # down to 1,486, and half the bytes. The rest of cc4c's patterns are publishing policy and
-  # stay out - this file is the raw product coverage.
+  # somewhere outside it and the whole file is dropped. Removing '/usr/*' cannot drop a product
+  # file, and it is cc4c's own first remove pattern. The pass also merges the duplicate records
+  # geninfo emits, one per object that included a header. Measured on a real medium run: 15,659
+  # source files down to 734 and 51 MB down to 8.2 MB, with the count of .c and .cpp files and
+  # the coverage totals unchanged. The rest of cc4c's patterns are publishing policy and stay
+  # out - this file is the raw product coverage.
   lcov -q -d "$COVERAGE_SRC" -c -t cubrid -o "$out.all" || return 1
   [ -s "$out.all" ] \
     || { echo "** ERROR: lcov wrote nothing to $out.all" >&2; rm -f "$out.all"; return 1; }
