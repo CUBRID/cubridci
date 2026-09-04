@@ -11,6 +11,7 @@ ARG DBD_CUBRID_SHA256=1552e9b2bb93d8a32010f2bb77dc4f0c152971aed019ce42e494e86f24
 # perl-devel and ncurses-devel only build DBD::cubrid (the bundled CCI includes curses.h), and
 # Makefile.PL ignores a failed CCI build, so the static library is checked before make.
 # glibc-gconv-extra comes in with perl-devel and is not in the base image, so it goes back out.
+# sshpass: the controller reaches the other nodes with CTP's own password account.
 RUN set -ex \
         && dnf install -y epel-release \
         && dnf install -y --setopt=tsflags=nodocs --setopt=install_weak_deps=False \
@@ -20,7 +21,7 @@ RUN set -ex \
                 net-tools telnet wget \
                 sudo openssh-server openssh-clients \
                 java-1.8.0-openjdk-devel \
-                dos2unix lcov bc jq expect \
+                dos2unix lcov bc jq expect sshpass \
                 perl-DBI perl-Time-HiRes perl-Test-Simple \
         && localedef -f UTF-8 -i ko_KR ko_KR.UTF-8 \
         && localedef -f EUC-KR -i ko_KR ko_KR.EUC-KR \

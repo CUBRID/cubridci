@@ -7,6 +7,7 @@ function usage ()
 Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh test [<category>]
        /entrypoint.sh node
+       /entrypoint.sh coverage [<category>]
        /entrypoint.sh <command> [<args>...]
 
 <category> overrides $TEST_SUITE. One category per run.
@@ -26,6 +27,17 @@ need it on every host the controller does not run on. Required env:
 
 MEMORY_LEAK=yes runs 'test sql' and 'test medium' under valgrind. It also reads:
   MEMORY_SCENARIO   scenario path (default: the one the category's conf holds)
+
+CODE_COVERAGE=yes collects gcov data after 'test', for any category. It needs a
+coverage build injected at $CUBRID and that build's tree at the same path it was
+built at. Every 'node' of a multi-node category needs it set too. It also reads:
+  COVERAGE_SRC      that source tree (default: $WORKDIR/cubrid)
+
+Both 'test' and 'coverage' stop CUBRID before reading the data: an instrumented
+process writes its .gcda only when it exits.
+
+'coverage' collects on this container alone. The controller runs it on every
+node itself, so it is only for collecting by hand.
 EOF
 }
 
@@ -74,13 +86,14 @@ function resolve_category ()
       TC_REPO=cubrid-testcases            CTP_CMD=ha_repl
       CTP_CONF=conf/ha_repl_ci.conf       REPORT_STYLE=status
       CONF_WRITER=write_ha_conf
-      HA_TOPOLOGY=1 ;;
+      HA_TOPOLOGY=1                       COVERAGE_NODES=$HA_SLAVE_HOST ;;
     ha_shell)
       TC_REPO=cubrid-testcases-private    CTP_CMD=shell
       CTP_CONF=conf/ha_shell_ci.conf      REPORT_STYLE=status
       CONF_WRITER=write_shell_conf
       SHELL_ROOT=$WORKDIR/$TC_REPO/HA/shell
-      SHELL_TIMEOUT=7200                  HA_TOPOLOGY=1 ;;
+      SHELL_TIMEOUT=7200                  HA_TOPOLOGY=1
+      COVERAGE_NODES=$HA_SLAVE_HOST ;;
     rqg)
       TC_REPO=cubrid-testcases-private    CTP_CMD=rqg
       CTP_CONF=conf/rqg_ci.conf           REPORT_STYLE=status
@@ -120,6 +133,19 @@ function resolve_category ()
     cciresult) XML_SRC="$CTP_HOME/result/$CTP_CMD" ;;
     status)    XML_SRC="$CTP_HOME/result/$CTP_CMD/current_runtime_logs" ;;
   esac
+}
+
+# Unlike a memory-leak run this needs no conf key and no category of its own: an instrumented
+# binary writes its .gcda by itself. So it lives outside resolve_category, and 'node' and
+# 'coverage' read it too.
+function resolve_coverage ()
+{
+  case "${CODE_COVERAGE,,}" in
+    ""|0|no|false|off) CODE_COVERAGE= ;;
+    1|yes|true|on)     CODE_COVERAGE=1 ;;
+    *) echo "** ERROR: CODE_COVERAGE must be yes or no, not '$CODE_COVERAGE'" >&2; exit 1 ;;
+  esac
+  COVERAGE_SRC=${COVERAGE_SRC:-$WORKDIR/cubrid}
 }
 
 # Drop the token on exit so the test step never sees a git credential.
@@ -224,8 +250,11 @@ function prepare_node ()
 
   # The shell runner works inside the case's own directory and saves a failing case under
   # ~/ERROR_BACKUP, so those have to belong to the node account too, not just CUBRID and CTP.
+  # And the node account runs the server, so on a coverage run the build tree it writes its
+  # .gcda into has to belong to it as well.
   local d
-  for d in "$CUBRID" "$WORKDIR"/cubrid-test* "$WORKDIR/ERROR_BACKUP" "$WORKDIR/do_not_delete_core"; do
+  for d in "$CUBRID" "$WORKDIR"/cubrid-test* "$WORKDIR/ERROR_BACKUP" "$WORKDIR/do_not_delete_core" \
+           ${CODE_COVERAGE:+"$COVERAGE_SRC"}; do
     [ -d "$d" ] || continue
     chown -R "$NODE_USER" "$d"
   done
@@ -239,6 +268,10 @@ function prepare_node ()
       echo "$v=${!v}"
     done
   } > /etc/environment
+
+  if [ -n "$CODE_COVERAGE" ]; then
+    mkdir -p "$TEST_REPORT" && chown "$NODE_USER" "$TEST_REPORT"
+  fi
 
   pgrep -x sshd >/dev/null || /usr/sbin/sshd
   echo "[node] $NODE_USER@$(hostname) ready"
@@ -321,13 +354,20 @@ EOF
   echo "[conf] $CTP_HOME/$CTP_CONF -> $where"
 }
 
+# <type> is one of release, debug, optdebug, coverage debug, profile debug or unknown
+# (CMakeLists.txt BUILD_TYPE).
+function build_type_of ()
+{
+  "$CUBRID/bin/cubrid_rel" | sed -n 's/.*[0-9]\+bit \(.*\) build for.*/\1/p'
+}
+
 # A release build is -O2 -DNDEBUG with no -g, so whatever reads the run afterwards - a leak
 # report, a core - gets bare addresses out of it, and the run still finishes and passes.
 function require_debug_build ()
 {
   local what=$1
   local build_type
-  build_type=$("$CUBRID/bin/cubrid_rel" | sed -n 's/.*[0-9]\+bit \(.*\) build for.*/\1/p')
+  build_type=$(build_type_of)
   case "$build_type" in
     *debug*) ;;
     *) echo "** ERROR: $what needs a build with debug symbols;" \
@@ -381,6 +421,208 @@ function write_memory_conf ()
     || { echo "** ERROR: $CTP_CONF has enable_memory_leak='$got'; ini.sh did not write it" >&2; exit 1; }
 
   echo "[conf] $dst -> valgrind on, scenario $(ini.sh -s sql "$dst" scenario)"
+}
+
+# The .gcda paths are compiled into the binaries, so the tree has to sit where it was built.
+function check_coverage_env ()
+{
+  command -v lcov >/dev/null \
+    || { echo "** ERROR: lcov is not on PATH; a coverage run needs it" >&2; exit 1; }
+
+  [ -d "$COVERAGE_SRC" ] \
+    || { echo "** ERROR: no coverage source tree at $COVERAGE_SRC; unpack the gcov source" \
+              "archive so its tree lands there" >&2; exit 1; }
+  [ -n "$(find "$COVERAGE_SRC" -name '*.gcno' -print -quit)" ] \
+    || { echo "** ERROR: no .gcno under $COVERAGE_SRC; that tree is not from a coverage build" >&2; exit 1; }
+
+  # Before the build-type probe below, which runs an instrumented binary of its own.
+  COVERAGE_STALE_COUNT=$(find "$COVERAGE_SRC" -name '*.gcda' -printf . | wc -c)
+
+  local build_type
+  build_type=$(build_type_of)
+  case "$build_type" in
+    *coverage*) ;;
+    *) echo "** ERROR: a coverage run needs a build made with 'build.sh -m coverage';" \
+            "$CUBRID is a '${build_type:-unreadable}' build" >&2; exit 1 ;;
+  esac
+
+  # Two archives from different builds put .gcno and binaries out of step, and geninfo answers by
+  # skipping each mismatched file - a small but valid lcov, and a clean exit. Only the generated
+  # version.h carries the serial. Take the first match: $(echo ...) would join two into a string.
+  local vh src_version
+  set -- "$COVERAGE_SRC"/build_*_coverage/version.h
+  vh=$1
+  [ -f "$vh" ] \
+    || { echo "** ERROR: no build_*_coverage/version.h under $COVERAGE_SRC;" \
+              "the two gcov archives cannot be checked against each other" >&2; exit 1; }
+  src_version=$(awk '/^#define (MAJOR|MINOR|PATCH|EXTRA)_VERSION /{v[$2]=$3}
+                     END{print v["MAJOR_VERSION"]"."v["MINOR_VERSION"]"."v["PATCH_VERSION"]"."v["EXTRA_VERSION"]}' "$vh")
+  case "$("$CUBRID/bin/cubrid_rel")" in
+    *"$src_version"*) ;;
+    *) echo "** ERROR: $COVERAGE_SRC is build $src_version but $CUBRID is not;" \
+            "the two gcov archives are from different builds" >&2; exit 1 ;;
+  esac
+
+  # HA_TOPOLOGY only means "nodes need preparing", so the hosts to collect from are their own
+  # attribute rather than inferred from it. Without it a multi-node run reports the controller's alone.
+  [ -z "$HA_TOPOLOGY" ] || [ -n "$COVERAGE_NODES" ] \
+    || { echo "** ERROR: $TEST_SUITE prepares nodes but names none to collect from;" \
+              "set HA_SLAVE_HOST" >&2; exit 1; }
+
+  echo "[coverage] $COVERAGE_SRC, build type '$build_type'"
+}
+
+# What matters is not how find reported the delete but whether anything is left: a leftover .gcda
+# is counted by the next run on this tree, and the measured failures are partial deletes anyway.
+function delete_gcda ()
+{
+  find "$COVERAGE_SRC" -name '*.gcda' -delete || true
+  # Checked apart from the delete, because a find that could not read the tree also returns nothing.
+  local left
+  left=$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit) \
+    || { echo "** ERROR: cannot read $COVERAGE_SRC to confirm the .gcda are gone" >&2; return 1; }
+  [ -z "$left" ] \
+    || { echo "** ERROR: .gcda are still under $COVERAGE_SRC; a run on this tree would count" \
+              "data it did not produce" >&2; return 1; }
+}
+
+# gcov merges into an existing .gcda, so anything left behind is counted in this run. Last step
+# before CTP starts: the guards above run cubrid_rel, and one instrumented binary writes a .gcda
+# per translation unit linked into it - enough to satisfy run_lcov's "nothing was executed" check.
+function clear_gcda ()
+{
+  delete_gcda || return 1
+  if [ "${COVERAGE_STALE_COUNT:-0}" -gt 0 ]; then
+    echo "[coverage] cleared $COVERAGE_STALE_COUNT .gcda that were already in the tree"
+  fi
+}
+
+# The same name the nightly's collector builds, for the category in it. Only the name: cc4c picks
+# files up by a ".info" sidecar and rewrites their SF paths against a directory this layout has not.
+function lcov_name ()
+{
+  # %s (epoch), not %S: the nightly collector's own format, and cc4c never reads the stamp.
+  echo "cubrid_[${TEST_SUITE}]_${USER:-$(id -un)}-$(hostname -s)_$(date '+%Y%m%d%H%M%s').lcov"
+}
+
+# An instrumented process writes its .gcda when it exits, and no runner reliably stops the server:
+# the SQL runner skips its cleanup after a core, the shell runner leaves stopping to the case. What
+# still runs at the container's exit dies on SIGKILL. A zombie stalls the stop, hence the timeout.
+function stop_for_coverage ()
+{
+  timeout 300 "$CUBRID/bin/cubrid" service stop > /dev/null 2>&1 || true
+  # The stop can fail or hit the timeout, and then the very thing this function exists to
+  # prevent has happened. One other process's .gcda would be enough for the check below.
+  local p
+  for p in cub_server cub_master cub_broker cub_cas; do
+    ! pgrep -x "$p" > /dev/null \
+      || { echo "** ERROR: $p is still running after 'cubrid service stop';" \
+                "it never wrote its .gcda" >&2; return 1; }
+  done
+}
+
+function capture_lcov ()
+{
+  local out=$1
+  stop_for_coverage || return 1
+
+  [ -n "$(find "$COVERAGE_SRC" -name '*.gcda' -print -quit)" ] \
+    || { echo "** ERROR: no .gcda under $COVERAGE_SRC; nothing was executed under gcov" >&2; return 1; }
+  # No --gcov-tool: the system gcov matches the compiler both images carry, unlike CTP's bundled
+  # one. The system headers come out afterwards rather than through --no-external, which judges
+  # "external" against the base directory and drops any file whose .gcno holds a relative name.
+  lcov -q -d "$COVERAGE_SRC" -c -t cubrid -o "$out.all" || return 1
+  [ -s "$out.all" ] \
+    || { echo "** ERROR: lcov wrote nothing to $out.all" >&2; rm -f "$out.all"; return 1; }
+  lcov -q -r "$out.all" '/usr/*' -o "$out" || { rm -f "$out.all" "$out"; return 1; }
+  rm -f "$out.all"
+  [ -s "$out" ] || { echo "** ERROR: lcov wrote nothing to $out" >&2; return 1; }
+  # The rate is the only figure that shows a run which collected far less than it should have. A
+  # newer lcov could word its summary differently and leave the sed matching nothing, which is no
+  # reason to fail a run whose file is sound.
+  local rate
+  rate=$(lcov --summary "$out" 2>&1 | sed -n 's/^  \(lines\|functions\)/[coverage]   \1/p') \
+    || { echo "** ERROR: lcov --summary failed on $out" >&2; return 1; }
+  if [ -n "$rate" ]; then
+    echo "$rate"
+  else
+    echo "** WARNING: could not read a coverage rate out of 'lcov --summary $out';" \
+         "the file itself is written" >&2
+  fi
+
+  # Read after lcov, so the probe's own .gcda stays out of the file. Two cases install a release
+  # build over $CUBRID and are in no exclude list (shell cbrd_26350, ha_shell cbrd_24700, that one
+  # on the slave too); every case after them leaves no .gcda, yet the data still reads as a full run.
+  local build_type
+  build_type=$(build_type_of)
+  case "$build_type" in
+    *coverage*) ;;
+    *) echo "** ERROR: $CUBRID is a '${build_type:-unreadable}' build now, so a case replaced" \
+            "it during the run; $out holds only what ran before that" >&2; return 1 ;;
+  esac
+}
+
+# The tree is left clean whatever the outcome. A failed collection still leaves .gcda behind, and
+# a node container outlives its run and clears the tree only at startup, so the next run there
+# would count them. Not being able to collect by hand after a failure is the price.
+function run_lcov ()
+{
+  [ -d "$COVERAGE_SRC" ] \
+    || { echo "** ERROR: no coverage source tree at $COVERAGE_SRC" >&2; return 1; }
+  local rc=0
+  capture_lcov "$1" || rc=1
+  delete_gcda || rc=1
+  return $rc
+}
+
+# Each node runs its own server, so the slave holds coverage the controller never sees. CTP
+# reaches its nodes by ssh with a password because jsch cannot do public keys, and this uses
+# the same account and password rather than adding a second way in.
+function collect_coverage_from_node ()
+{
+  local host=$1 remote
+  # Same non-login shell as CTP's own sessions, so the remote side is told what it needs here.
+  remote=$(SSHPASS=$HA_NODE_PASSWORD sshpass -e ssh -n "$NODE_USER@$host" \
+             "CODE_COVERAGE=yes TEST_SUITE='$TEST_SUITE' TEST_REPORT='$TEST_REPORT'" \
+             "COVERAGE_SRC='$COVERAGE_SRC' /entrypoint.sh coverage") || return 1
+  remote=$(echo "$remote" | sed -n 's/^\[coverage\] wrote //p')
+  [ -n "$remote" ] \
+    || { echo "** ERROR: $host reported no lcov file" >&2; return 1; }
+
+  # Not scp: the name carries the category in square brackets, and OpenSSH 8's scp globs the remote
+  # path, so [ha_shell] becomes a character class and the name comes back changed ("protocol error").
+  SSHPASS=$HA_NODE_PASSWORD sshpass -e ssh -n "$NODE_USER@$host" "cat '$remote'" \
+    > "$TEST_REPORT/$(basename "$remote")" || return 1
+  [ -s "$TEST_REPORT/$(basename "$remote")" ] \
+    || { echo "** ERROR: the lcov file copied from $host is empty" >&2; return 1; }
+  echo "[coverage] collected $(basename "$remote") from $host"
+}
+
+# The "wrote" line is how a node hands its path back to the controller, so it has to be printed
+# on every success, not only when this is reached through the verb.
+function run_coverage ()
+{
+  [ -n "$CODE_COVERAGE" ] \
+    || { echo "** ERROR: 'coverage' needs CODE_COVERAGE=yes" >&2; return 1; }
+  # The category goes in the file name, and an empty one would name the file after no category.
+  [ -n "$TEST_SUITE" ] \
+    || { echo "** ERROR: 'coverage' needs a category (argument or \$TEST_SUITE)" >&2; return 1; }
+  mkdir -p "$TEST_REPORT" \
+    || { echo "** ERROR: cannot create $TEST_REPORT" >&2; return 1; }
+  local out="$TEST_REPORT/$(lcov_name)"
+  run_lcov "$out" || return 1
+  echo "[coverage] $(cd "$TEST_REPORT" && du -h "$(basename "$out")")"
+  echo "[coverage] wrote $out"
+}
+
+function collect_coverage ()
+{
+  run_coverage || return 1
+  # Unquoted on purpose: COVERAGE_NODES is a space-separated list of hosts.
+  local host
+  for host in $COVERAGE_NODES; do
+    collect_coverage_from_node "$host" || return 1
+  done
 }
 
 # $RUN_STAMP keeps reporting and judging off results left by earlier runs.
@@ -515,6 +757,12 @@ function judge_status ()
 
 function run_test ()
 {
+  # Here and not in resolve_coverage: MEMORY_LEAK is normalised by resolve_category, which 'node'
+  # and 'coverage' do not call, and a plain MEMORY_LEAK=no would read as on there. The pair is
+  # refused for cost, not data: memcheck can overrun stop_for_coverage's timeout on a slower run.
+  [ -z "$CODE_COVERAGE" ] || [ -z "$MEMORY_LEAK" ] \
+    || { echo "** ERROR: CODE_COVERAGE and MEMORY_LEAK cannot both be on; run them separately" >&2; exit 1; }
+
   [ -x "$CUBRID/bin/cubrid_rel" ] \
     || { echo "** ERROR: no CUBRID at $CUBRID; inject a build before running 'test'" >&2; exit 1; }
   [ -d "$CTP_HOME" ] \
@@ -528,6 +776,11 @@ function run_test ()
   # shell cases reach the server over ssh (shell_utils.sh builds "ssh -p ...").
   pgrep -x sshd >/dev/null || sudo /usr/sbin/sshd
   ulimit -c 10485760
+
+  # Before prepare_node, so a run that cannot be collected fails before it sets up any node.
+  if [ -n "$CODE_COVERAGE" ]; then
+    check_coverage_env
+  fi
 
   # This host is the controller and one of the nodes; the others run 'node'.
   if [ -n "$HA_TOPOLOGY" ]; then
@@ -555,6 +808,10 @@ function run_test ()
     export RQG_HOME
   fi
 
+  if [ -n "$CODE_COVERAGE" ]; then
+    clear_gcda
+  fi
+
   local ctp_ret=0
   ( cd "$WORKDIR" && HOME="$WORKDIR" "$CTP_HOME/bin/ctp.sh" "$CTP_CMD" -c "$CTP_HOME/$CTP_CONF" ) \
     || ctp_ret=$?
@@ -563,6 +820,10 @@ function run_test ()
 
   if [ -n "$MEMORY_LEAK" ]; then
     collect_memory || exit 1
+  fi
+
+  if [ -n "$CODE_COVERAGE" ]; then
+    collect_coverage || exit 1
   fi
 
   if [ "$ctp_ret" -ne 0 ]; then
@@ -582,10 +843,25 @@ case "$1" in
   test)
     shift; if [ -n "$1" ]; then TEST_SUITE=$1; fi
     resolve_category
+    resolve_coverage
     run_test
     ;;
+  coverage)
+    shift; if [ -n "$1" ]; then TEST_SUITE=$1; fi
+    resolve_coverage
+    run_coverage
+    ;;
   node)
+    resolve_coverage
+    # The same guards the controller runs, so a node that cannot be collected from fails now
+    # and not hours later when the controller comes asking.
+    if [ -n "$CODE_COVERAGE" ]; then
+      check_coverage_env
+    fi
     prepare_node
+    if [ -n "$CODE_COVERAGE" ]; then
+      clear_gcda
+    fi
     # Reaping zombies is PID 1's job; a shell in wait does it, 'sleep' alone does not.
     while :; do sleep 3600 & wait $!; done
     ;;

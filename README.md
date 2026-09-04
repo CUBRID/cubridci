@@ -40,6 +40,7 @@ jdbc category compiles cases with javac.
 /entrypoint.sh checkout [<category>]
 /entrypoint.sh test [<category>]
 /entrypoint.sh node
+/entrypoint.sh coverage [<category>]
 /entrypoint.sh <command> [<args>...]
 ```
 
@@ -50,6 +51,7 @@ One category per run. The argument overrides `$TEST_SUITE`; give it either way.
 | `checkout` | Clones `cubrid-testtools` and the category's test-cases repo into `/home`. Retries five times with a growing delay. `rqg` gets a third repo, narrowed to the one directory it needs. |
 | `test`     | Runs the category through CTP, collects JUnit XML, and judges the result.              |
 | `node`     | Prepares this container as a CTP node and waits. Needed on every host the controller does not run on. |
+| `coverage` | Writes an lcov file for this container alone. `test` collects the controller itself and runs this on the other nodes, so it is only for collecting by hand. |
 
 `test` never checks out on its own — run `checkout` first. `$GHI_TOKEN` lives inside `checkout`
 only; the git credential is removed when `checkout` exits, so the test step never sees it.
@@ -177,6 +179,104 @@ $ nerdctl run --rm -v /path/to/CUBRID:/home/CUBRID \
     cubridci/cubridci:test_rl8.10 test
 ```
 
+### Code coverage runs
+
+`CODE_COVERAGE=yes` collects gcov data after the run, for **any** category. Unlike a
+memory-leak run it needs no conf key and is not a category of its own: the instrumented
+binaries write their `.gcda` by themselves.
+
+**It needs a coverage build, and that build's source tree.** Make both in the build image:
+
+```console
+$ nerdctl run --rm -v /shared:/out -e GCOV_OUTPUT_DIR=/out \
+    cubridci/cubridci:build_rl8.10 bash -lc '/entrypoint.sh checkout develop && /entrypoint.sh coverage'
+```
+
+That leaves two archives, named as the code coverage guide names them:
+
+| Archive                                     | Holds                                                  |
+| ------------------------------------------- | ------------------------------------------------------ |
+| `CUBRID-<version>-gcov-Linux.x86_64.tar.gz`     | the install tree — unpack it so it lands at `/home/CUBRID` |
+| `cubrid-<version>-gcov-src-Linux.x86_64.tar.gz` | the source tree with the `.gcno` — unpack it so it lands at `/home/cubrid` |
+
+**Unpack the source archive so its tree lands where it was built.** The `.gcda` paths are
+compiled into the binaries, and both images build and test under `/home`, so a tree at
+`/home/cubrid` needs no path rewriting at all — neither `GCOV_PREFIX` nor lcov's
+`geninfo_adjust_src_path`, which is all the nightly regression's rewriting is for. The archive's
+top-level directory is `cubrid`, so `tar -C /home -xzf <source archive>` is the whole of it.
+Point `$COVERAGE_SRC` elsewhere only if the build used a different path.
+
+**Unpack it, do not bind-mount a shared tree.** The run writes its `.gcda` into that tree, so
+two containers sharing one would mix their results, and the tree would be left dirty for the
+next run. Each container needs its own copy.
+
+`test` refuses a build that is not a coverage build — it reads the type out of `cubrid_rel`,
+which prints `coverage debug` for one. Every container also clears its own tree of `.gcda`,
+because gcov merges into an existing one and the two runs would be mixed together: the
+controller before the run starts, and each container again once it has collected — a `node`
+container outlives the run that used it.
+
+**CUBRID is stopped before the data is read.** An instrumented process writes its `.gcda` only
+when it exits, and no runner reliably stops the server — the SQL runner skips its own cleanup
+whenever the run produced a core, and the shell runner never stops anything, since starting and
+stopping is the case's job. Anything still running when the container exits is killed with
+SIGKILL and its coverage is gone.
+
+**The build type is read again after collecting.** A handful of cases install a release build
+over `$CUBRID` from ftp.cubrid.org and are in no exclude list — `shell` `cbrd_26350` and
+`ha_shell` `cbrd_24700`, the latter on the slave too. Every case after one of those leaves no
+`.gcda` at all, and the collected file would still look like a full run, so `test` fails and
+says so. The lcov file is still written, holding what ran before the replacement.
+
+One lcov file per node is collected into `$TEST_REPORT`, named
+`cubrid_[<category>]_<user>-<host>_<timestamp>.lcov` — the name the nightly regression's own
+collector builds, so the category stays legible. **Merging and publishing are outside this
+image**; it stops at the lcov file. Note that cc4c cannot merge these as they are: its
+`coverage_monitor.sh` picks files up by a `.info` sidecar naming them, and rewrites their `SF:`
+paths against a `cubrid-<build id>` source directory this layout deliberately does not have.
+Every node and category here reports the same `/home/cubrid/...` paths, so plain `lcov -a`
+merges them with no rewriting at all.
+
+For `ha_repl` and `ha_shell` the slave runs its own server, so it holds coverage the controller
+never sees. Give **every** node the same source tree at the same path and `CODE_COVERAGE=yes`;
+the controller then collects each node's file over ssh, with the same `qa` account and
+`$HA_NODE_PASSWORD` CTP itself uses, and a node it cannot reach fails the run.
+
+`MEMORY_LEAK=yes` and `CODE_COVERAGE=yes` cannot both be on. There is nothing to gain — a
+coverage build is already 7.5 times slower and memcheck multiplies that again — and a shutdown
+that slow overruns the stop above, which puts the run back into the failure it exists to
+prevent.
+
+A coverage build is `-O0 --coverage`, so expect a run to take considerably longer than the same
+one on a release build — `medium` took 1,236 s against 164 s on a release build (measured), a
+factor of 7.5. At that factor `sql` is four to five hours and `isolation` is tens of hours, so
+a whole category in one container is not always practical even though every category works.
+The system headers are removed from the file afterwards. On the `medium` run above that took it
+from 15,659 source files to 734 and from 51 MB to 8.2 MB, leaving the `.c` and `.cpp` count and
+the coverage totals untouched — most of what goes is `/usr/include`, and the rest is the
+duplicate records lcov emits once per object that included a header. Nothing wants them, and
+cc4c strips the same `/usr/*` at merge time. The rest of cc4c's remove patterns are publishing
+policy and stay out — this file is the raw product coverage.
+
+`test` prints the rate it collected:
+
+```
+[coverage]   lines......: 38.2% (181577 of 474865 lines)
+[coverage]   functions..: 48.9% (12376 of 25322 functions)
+```
+
+That is one category on its own, so it reads low, and it is not the figure the guide publishes:
+that one is every category merged, with cc4c's publishing patterns removed as well. Do not
+compare it against the QA homepage one for one.
+
+```console
+$ nerdctl run --rm -v /shared:/shared -e TEST_SUITE=medium -e CODE_COVERAGE=yes \
+    cubridci/cubridci:test_rl8.10 bash -lc '
+      tar -C /home -xzf /shared/CUBRID-*-gcov-Linux.x86_64.tar.gz &&
+      tar -C /home -xzf /shared/cubrid-*-gcov-src-Linux.x86_64.tar.gz &&
+      /entrypoint.sh checkout && /entrypoint.sh test'
+```
+
 ### Environment
 
 | Variable            | Default                    | Used by                                     |
@@ -185,13 +285,15 @@ $ nerdctl run --rm -v /path/to/CUBRID:/home/CUBRID \
 | `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — branch of `cubrid-testtools`, and of `cubrid-testtools-internal` for `rqg` |
 | `BRANCH_TESTCASES`  | `develop`                  | `checkout` — test-cases branch              |
 | `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long`, `cci`, `jdbc`, `ha_shell` and `rqg` |
-| `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML is collected       |
+| `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML, leak reports and lcov files are collected; `node` creates it for the node account |
 | `HA_NODE_PASSWORD`  | (unset)                    | `node`, and `test ha_repl` / `test ha_shell` — password for the `qa` account |
 | `HA_SLAVE_HOST`     | (unset)                    | `test ha_repl`, `test ha_shell` — hostname of the slave node |
 | `HA_SCENARIO`       | `/home/cubrid-testcases/sql` | `test ha_repl` — scenario path             |
 | `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long`, `test cci`, `test ha_shell`, `test rqg` — scenario path |
 | `MEMORY_LEAK`       | `no`                       | `test sql`, `test medium` — run under valgrind |
 | `MEMORY_SCENARIO`   | the one the category's conf holds | `test` with `MEMORY_LEAK=yes` — scenario path |
+| `CODE_COVERAGE`     | `no`                       | `test`, `node`, `coverage` — collect gcov data |
+| `COVERAGE_SRC`      | `/home/cubrid`             | `test`, `node`, `coverage` with `CODE_COVERAGE=yes` — the coverage build's source tree |
 
 Paths the image fixes: `$WORKDIR` = `/home`, `$CUBRID` = `/home/CUBRID`,
 `$CTP_HOME` = `/home/cubrid-testtools/CTP`. `test rqg` also sets
@@ -351,6 +453,14 @@ to spare.
 | `ha_shell`   | `_40_guava/cbrd_26062`                                               | Its answer file has no room for the connect error the master's `copylogdb` prints while the case keeps the slave stopped, and the case blanks JSON values only, so the message survives the diff. |
 | `ha_shell`   | `_22_ha/bug_xdbms2760`                                               | The case waits 200 s and then counts rows, but its writer script ends by dropping the table; on hardware this fast the writer finishes first and the count finds no table. |
 | `rqg`        | `_02_issues/bug_bts_16290`                                           | Its `checkdb_catalogs.txt` names catalog classes without an owner qualifier, which `cubrid checkdb -i` has rejected since owner-qualified names arrived. It is the only case that passes `-i`. Only 17 of the 104 cases have been run here, so this list is not exhaustive. |
+
+**Two cases replace the injected build with a release one.** `shell` `cbrd_26350` and
+`ha_shell` `cbrd_24700` both call `run_cubrid_install` on an `ftp.cubrid.org` release build and
+install it over `$CUBRID`; the `ha_shell` one does the same on the slave. Neither is in an
+exclude list. They restore the original on their normal path, but not on every branch, and they
+need outbound network — `run_cubrid_install` does not stop when its download fails, and removes
+`$CUBRID` anyway. On a coverage run this ends the collection for every case after it, which is
+why `test` re-reads the build type before it finishes.
 
 **`sql_by_cci` compares against a different answer file.** Where a case has an `.answer_cci`
 next to it, the cci runner uses that instead of `.answer` — the cases whose cci output differs
