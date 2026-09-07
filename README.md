@@ -286,6 +286,7 @@ $ nerdctl run --rm -v /shared:/shared -e TEST_SUITE=medium -e CODE_COVERAGE=yes 
 | `BRANCH_TESTCASES`  | `develop`                  | `checkout` — test-cases branch              |
 | `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long`, `cci`, `jdbc`, `ha_shell` and `rqg` |
 | `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML, leak reports and lcov files are collected; `node` creates it for the node account |
+| `CUBRID_DATABASES`  | `/home/CUBRID/databases`   | every category — where CUBRID keeps `databases.txt`; `node` and `test` on an HA topology create it and give it to the `qa` account |
 | `HA_NODE_PASSWORD`  | (unset)                    | `node`, and `test ha_repl` / `test ha_shell` — password for the `qa` account |
 | `HA_SLAVE_HOST`     | (unset)                    | `test ha_repl`, `test ha_shell` — hostname of the slave node |
 | `HA_SCENARIO`       | `/home/cubrid-testcases/sql` | `test ha_repl` — scenario path             |
@@ -366,6 +367,14 @@ account gets its password at run time from that variable; the image bakes in non
 **Give each container its own CUBRID.** Both nodes rewrite `$CUBRID/conf` and create databases
 under it, and the shell runner keeps a copy of the whole tree in the node account's home, so two
 containers cannot share one host directory.
+
+**`ha_shell` needs `CUBRID_DATABASES` to stay at `$CUBRID/databases`.** `node` and `test` create
+whatever that variable names and give it to the `qa` account, so a node can register a database
+outside the install tree, and `ha_repl` passes that way. `ha_shell` does not: CTP's HA setup
+scripts `cd $CUBRID/databases` before `createdb`, and 85 of its case directories address that
+path directly, so the database and its registry end up in different places — three of the four
+`_37_elderberry` cases then fail with `Failed to connect to database server`. To give each node
+its own storage, mount a host directory over `$CUBRID/databases` instead of moving the variable.
 
 **Start the slave first**, then the master:
 
