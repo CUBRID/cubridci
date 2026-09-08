@@ -248,13 +248,17 @@ function prepare_node ()
 
   echo "$NODE_USER:$HA_NODE_PASSWORD" | chpasswd
 
+  # createdb writes the registry but never creates the directory holding it.
+  mkdir -p "$CUBRID_DATABASES" \
+    || { echo "** ERROR: cannot create $CUBRID_DATABASES for the database registry" >&2; exit 1; }
+
   # The shell runner works inside the case's own directory and saves a failing case under
   # ~/ERROR_BACKUP, so those have to belong to the node account too, not just CUBRID and CTP.
   # And the node account runs the server, so on a coverage run the build tree it writes its
   # .gcda into has to belong to it as well.
   local d
-  for d in "$CUBRID" "$WORKDIR"/cubrid-test* "$WORKDIR/ERROR_BACKUP" "$WORKDIR/do_not_delete_core" \
-           ${CODE_COVERAGE:+"$COVERAGE_SRC"}; do
+  for d in "$CUBRID" "$CUBRID_DATABASES" "$WORKDIR"/cubrid-test* "$WORKDIR/ERROR_BACKUP" \
+           "$WORKDIR/do_not_delete_core" ${CODE_COVERAGE:+"$COVERAGE_SRC"}; do
     [ -d "$d" ] || continue
     chown -R "$NODE_USER" "$d"
   done
