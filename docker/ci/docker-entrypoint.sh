@@ -179,6 +179,18 @@ function checkout_repo ()
   local dir="$WORKDIR/$repo"
   local narrow=
   [ -z "$sparse" ] || narrow="--filter=blob:none --sparse"
+
+  # The reset to the remote tip and 'git clean -df' leave nothing in the tree saying what it held
+  # before. A retry re-runs checkout, so this reports the move and never refuses it.
+  if [ -d "$dir/.git" ]; then
+    local was_head was_branch
+    was_head=$(git -c safe.directory="$dir" -C "$dir" rev-parse --verify HEAD 2>/dev/null) || was_head=unknown
+    was_branch=$(git -c safe.directory="$dir" -C "$dir" symbolic-ref --short HEAD 2>/dev/null) || was_branch=unknown
+    echo "[checkout] $repo is already here at $was_branch -> $was_head; moving it to $branch tip"
+    [ "$was_branch" = "$branch" ] \
+      || echo "[warn] $repo was checked out from $was_branch, not $branch" >&2
+  fi
+
   local i ok=
   for i in 1 2 3 4 5; do
     if [ -d "$dir/.git" ]; then
@@ -356,6 +368,54 @@ EOF
     where="$scenario, master $(hostname), slave $HA_SLAVE_HOST"
   fi
   echo "[conf] $CTP_HOME/$CTP_CONF -> $where"
+}
+
+# Whether CTP moves the case tree to its own configured branch is decided outside this image: the
+# key's upstream default has flipped once, and a mounted CTP copy brings its owner's value. rqg is
+# in the gate because CTP routes it through the shell runner, the only runner that reads the key.
+function pin_testcase_source ()
+{
+  case "$CTP_CMD" in
+    shell|rqg) ;;
+    *) return 0 ;;
+  esac
+
+  local conf="$CTP_HOME/$CTP_CONF"
+  [ -f "$conf" ] \
+    || { echo "** ERROR: $conf not found; cannot pin the testcase source" >&2; exit 1; }
+
+  sed -i 's|^testcase_update_yn=.*|testcase_update_yn=false|' "$conf"
+  grep -qxF 'testcase_update_yn=false' "$conf" \
+    || { echo "** ERROR: $CTP_CONF lacks 'testcase_update_yn=false';" \
+              "check conf/shell_ci.conf upstream" >&2; exit 1; }
+  echo "[pin] $conf -> testcase_update_yn=false"
+}
+
+# The hash is the identity; a local branch name only records what the first checkout asked for.
+# safe.directory because what usually stops git here is a host tree's ownership, not a missing .git.
+function provenance_tree ()
+{
+  local dir=$1 name=$2
+  local branch head subject
+  head=$(git -c safe.directory="$dir" -C "$dir" rev-parse --verify HEAD 2>/dev/null) || head=
+  if [ -z "$head" ]; then
+    echo "[provenance] $name @ unknown -> unknown (no usable git metadata)"
+    return 0
+  fi
+  branch=$(git -c safe.directory="$dir" -C "$dir" symbolic-ref --short HEAD 2>/dev/null) || branch=
+  subject=$(git -c safe.directory="$dir" -C "$dir" log -1 --pretty=format:'%s' 2>/dev/null) || subject=
+  echo "[provenance] $name @ ${branch:-unknown} -> $head $subject"
+}
+
+# BRANCH_* is never printed: a mounted tree owes it nothing.
+function print_provenance ()
+{
+  local rel
+  rel=$("$CUBRID/bin/cubrid_rel" 2>/dev/null | sed -n '/./p') || rel=
+  echo "[provenance] ${rel:-unknown (cubrid_rel failed)}"
+  provenance_tree "$WORKDIR/cubrid-testtools" cubrid-testtools
+  provenance_tree "$WORKDIR/$TC_REPO" "$TC_REPO"
+  [ -z "$TOOL_REPO" ] || provenance_tree "$WORKDIR/$TOOL_REPO" "$TOOL_REPO"
 }
 
 # <type> is one of release, debug, optdebug, coverage debug, profile debug or unknown
@@ -770,9 +830,10 @@ function run_test ()
   [ -x "$CUBRID/bin/cubrid_rel" ] \
     || { echo "** ERROR: no CUBRID at $CUBRID; inject a build before running 'test'" >&2; exit 1; }
   [ -d "$CTP_HOME" ] \
-    || { echo "** ERROR: no CTP at $CTP_HOME; run 'checkout' first" >&2; exit 1; }
+    || { echo "** ERROR: no CTP at $CTP_HOME; run 'checkout' or mount a CTP tree there" >&2; exit 1; }
   [ -d "$WORKDIR/$TC_REPO" ] \
-    || { echo "** ERROR: no testcases at $WORKDIR/$TC_REPO; run 'checkout' first" >&2; exit 1; }
+    || { echo "** ERROR: no testcases at $WORKDIR/$TC_REPO;" \
+              "run 'checkout' or mount a testcases tree there" >&2; exit 1; }
 
   RUN_STAMP=$(mktemp)
   trap 'rm -f "$RUN_STAMP"' EXIT
@@ -786,6 +847,9 @@ function run_test ()
     check_coverage_env
   fi
 
+  # Between check_coverage_env's stale count and clear_gcda: cubrid_rel is instrumented here too.
+  print_provenance
+
   # This host is the controller and one of the nodes; the others run 'node'.
   if [ -n "$HA_TOPOLOGY" ]; then
     prepare_node
@@ -794,6 +858,8 @@ function run_test ()
   if [ -n "$CONF_WRITER" ]; then
     "$CONF_WRITER"
   fi
+
+  pin_testcase_source
 
   if [ -n "$MEMORY_LEAK" ]; then
     check_memory_env
@@ -808,7 +874,8 @@ function run_test ()
   # The tool is in a repo of its own, so checkout can succeed without it being there.
   if [ -n "$RQG_HOME" ]; then
     [ -f "$RQG_HOME/gentest.pl" ] \
-      || { echo "** ERROR: no RQG tool at $RQG_HOME; run 'checkout' first" >&2; exit 1; }
+      || { echo "** ERROR: no RQG tool at $RQG_HOME;" \
+                "run 'checkout' or mount the tool tree there" >&2; exit 1; }
     export RQG_HOME
   fi
 
@@ -822,13 +889,21 @@ function run_test ()
 
   collect_xml
 
+  # The pair is refused above, so the flag only defers the exit past the closing provenance.
+  local collect_ret=0
   if [ -n "$MEMORY_LEAK" ]; then
-    collect_memory || exit 1
+    collect_memory || collect_ret=1
   fi
 
   if [ -n "$CODE_COVERAGE" ]; then
-    collect_coverage || exit 1
+    collect_coverage || collect_ret=1
   fi
+
+  # After the collectors for the same reason; the sweep drops the .gcda its own probe just wrote.
+  print_provenance
+  [ -z "$CODE_COVERAGE" ] || delete_gcda || collect_ret=1
+
+  [ "$collect_ret" -eq 0 ] || exit 1
 
   if [ "$ctp_ret" -ne 0 ]; then
     echo "** ERROR: CTP exited with $ctp_ret" >&2
@@ -837,6 +912,9 @@ function run_test ()
 
   if "judge_${REPORT_STYLE}"; then exit 0; else exit 1; fi
 }
+
+# The Dockerfile ENV of this name is flattened at build time and cannot follow BRANCH_TESTTOOLS.
+export CTP_BRANCH_NAME=$BRANCH_TESTTOOLS
 
 case "$1" in
   checkout)

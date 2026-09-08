@@ -53,8 +53,56 @@ One category per run. The argument overrides `$TEST_SUITE`; give it either way.
 | `node`     | Prepares this container as a CTP node and waits. Needed on every host the controller does not run on. |
 | `coverage` | Writes an lcov file for this container alone. `test` collects the controller itself and runs this on the other nodes, so it is only for collecting by hand. |
 
-`test` never checks out on its own — run `checkout` first. `$GHI_TOKEN` lives inside `checkout`
-only; the git credential is removed when `checkout` exits, so the test step never sees it.
+`test` never checks out on its own — run `checkout` first, or mount the trees. `$GHI_TOKEN` lives
+inside `checkout` only; the git credential is removed when `checkout` exits, so the test step
+never sees it.
+
+### Where the cases and CTP come from
+
+Two ways, both supported, and `test` treats them alike:
+
+- **`checkout` inside the container**, what the CI does. It clones `cubrid-testtools` and the
+  category's cases repo into `/home` at the branches `$BRANCH_TESTTOOLS` and `$BRANCH_TESTCASES`
+  name.
+- **Trees prepared on the host and mounted** at `/home/cubrid-testtools` and `/home/<cases repo>`,
+  with no `checkout` at all. `test` only asks that the directories be there, so a host copy — a
+  `git worktree`, a tree carrying local edits — works as it stands.
+
+`$BRANCH_TESTCASES` and `$BRANCH_TESTTOOLS` are read by `checkout` and say nothing about a mounted
+tree. `$BRANCH_TESTTOOLS` decides two things: the branch `cubrid-testtools` is cloned at — and
+`cubrid-testtools-internal` for `rqg` — and `$CTP_BRANCH_NAME`, the revision name CTP reports for
+itself. Use `develop`: CTP's `master` has not moved since January 2021.
+
+**Once a run starts, neither tree moves.** Two paths could move them and both are off. CTP's own
+case-tree update is one: `test` forces `testcase_update_yn=false` into the conf of every
+shell-runner category — `shell`, `shell_heavy`, `shell_long`, `cci`, `ha_shell`, `rqg`, the only
+ones that read the key — because its upstream default has flipped before and a mounted CTP copy
+brings whatever value its owner left. For `shell` that conf is CTP's own `conf/shell_ci.conf`, so
+a mounted CTP tree is edited in place, as `checkout rqg`'s one-line patch of the generator already
+does. CTP's self-update is the other path, off through `CTP_SKIP_UPDATE=1`.
+
+**Running `checkout` a second time does move the tree.** It fetches the branch again and resets to
+the remote tip, so a tree at an earlier commit — or on another branch, if `$BRANCH_TESTCASES`
+changed — is moved, and `git clean -df` drops uncommitted edits. It prints what the tree held
+first and warns when the branch differs, but it never refuses: a retry re-runs `checkout`, and
+that is a normal path. Mount the tree instead if local edits have to survive.
+
+**The `[provenance]` lines say what actually ran.** `test` prints them at the start and again as
+soon as CTP returns:
+
+```
+[provenance] CUBRID 11.5.0 (11.5.0.2538-0364689) (64bit optdebug build for Linux) (Sep  7 2026 17:04:42)
+[provenance] cubrid-testtools @ develop -> bdd79ed0e4a0a7b0d0c8fd6c1b6f8e6d0a4a0b2c <subject>
+[provenance] cubrid-testcases @ develop -> 3f2a1c9d8b7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a <subject>
+```
+
+`rqg` adds a fourth line for `cubrid-testtools-internal`. The two blocks agreeing is the proof
+that the run held one revision of everything from end to end; the closing block also catches the
+two cases that install a release build over `$CUBRID` (see [Known limits](#known-limits)). Every
+value is read out of the container itself, from `cubrid_rel` and `git`, never from the `BRANCH_*`
+variables — and the hash is the identity, since a local branch name only records what the first
+checkout asked for. **Mount a tree's `.git` along with it**, or its line reads
+`@ unknown -> unknown (no usable git metadata)`; that is a note, not a failure.
 
 ### Categories
 
@@ -282,7 +330,7 @@ $ nerdctl run --rm -v /shared:/shared -e TEST_SUITE=medium -e CODE_COVERAGE=yes 
 | Variable            | Default                    | Used by                                     |
 | ------------------- | -------------------------- | ------------------------------------------- |
 | `TEST_SUITE`        | (empty)                    | `checkout`, `test` — the category           |
-| `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — branch of `cubrid-testtools`, and of `cubrid-testtools-internal` for `rqg` |
+| `BRANCH_TESTTOOLS`  | `develop`                  | `checkout` — branch of `cubrid-testtools`, and of `cubrid-testtools-internal` for `rqg`; every verb — `$CTP_BRANCH_NAME` |
 | `BRANCH_TESTCASES`  | `develop`                  | `checkout` — test-cases branch              |
 | `GHI_TOKEN`         | (unset)                    | `checkout` of a private repo; required for `shell`, `shell_heavy`, `shell_long`, `cci`, `jdbc`, `ha_shell` and `rqg` |
 | `TEST_REPORT`       | `/tmp/tests`               | `test` — where JUnit XML, leak reports and lcov files are collected; `node` creates it for the node account |
