@@ -248,8 +248,7 @@ function prepare_node ()
 
   echo "$NODE_USER:$HA_NODE_PASSWORD" | chpasswd
 
-  # createdb writes the database registry but never creates the directory that holds it, and a
-  # CUBRID_DATABASES outside the install tree is not part of the build either.
+  # createdb writes the registry but never creates the directory holding it.
   mkdir -p "$CUBRID_DATABASES" \
     || { echo "** ERROR: cannot create $CUBRID_DATABASES for the database registry" >&2; exit 1; }
 
