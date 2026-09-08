@@ -180,8 +180,7 @@ function checkout_repo ()
   local narrow=
   [ -z "$sparse" ] || narrow="--filter=blob:none --sparse"
 
-  # The reset to the remote tip and 'git clean -df' leave nothing in the tree saying what it held
-  # before. A retry re-runs checkout, so this reports the move and never refuses it.
+  # A retry re-runs checkout, so this only reports; the reset and clean leave no trace of the move.
   if [ -d "$dir/.git" ]; then
     local was_head was_branch
     was_head=$(git -c safe.directory="$dir" -C "$dir" rev-parse --verify HEAD 2>/dev/null) || was_head=unknown
@@ -370,9 +369,8 @@ EOF
   echo "[conf] $CTP_HOME/$CTP_CONF -> $where"
 }
 
-# Whether CTP moves the case tree to its own configured branch is decided outside this image: the
-# key's upstream default has flipped once, and a mounted CTP copy brings its owner's value. rqg is
-# in the gate because CTP routes it through the shell runner, the only runner that reads the key.
+# The key's value is decided outside this image - upstream flipped its default once, and a mounted
+# CTP copy brings its owner's. rqg is in the gate: CTP routes it through the key-reading runner.
 function pin_testcase_source ()
 {
   case "$CTP_CMD" in
@@ -391,7 +389,6 @@ function pin_testcase_source ()
   echo "[pin] $conf -> testcase_update_yn=false"
 }
 
-# The hash is the identity; a local branch name only records what the first checkout asked for.
 # safe.directory because what usually stops git here is a host tree's ownership, not a missing .git.
 function provenance_tree ()
 {
@@ -889,7 +886,7 @@ function run_test ()
 
   collect_xml
 
-  # The pair is refused above, so the flag only defers the exit past the closing provenance.
+  # The pair is refused above, so this only defers the exit past the closing provenance.
   local collect_ret=0
   if [ -n "$MEMORY_LEAK" ]; then
     collect_memory || collect_ret=1
