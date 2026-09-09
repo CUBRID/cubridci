@@ -69,7 +69,8 @@ ENV BRANCH_TESTCASES=develop
 
 ENV JAVA_HOME=/usr/lib/jvm/java-1.8.0
 ENV CTP_BRANCH_NAME=$BRANCH_TESTTOOLS
-ENV CTP_SKIP_UPDATE=0
+# Its only path is a grepo RMI server it waits on forever once a conf/common.conf is in place.
+ENV CTP_SKIP_UPDATE=1
 ENV CTP_HOME=$WORKDIR/cubrid-testtools/CTP
 ENV init_path=$CTP_HOME/shell/init_path
 ENV PATH=$CTP_HOME/bin:$CTP_HOME/common/script:$PATH
