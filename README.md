@@ -194,8 +194,8 @@ of the tree. Results land under `result/shell/`, and the report is `test-cci.xml
 `ccidb` database, and that costs cases — see the known failures below.
 
 `ha_repl` runs the public `cubrid-testcases/sql` tree, and CTP converts those SQL cases to their
-HA form. The whole default scenario is large: `sql/_01_object` alone is 3,327 cases and took
-2 hours 30 minutes on two containers.
+HA form. The whole default scenario is large — `sql/_01_object` alone is 3,327 cases and took
+2 hours 30 minutes on two containers — so point `$TEST_SCENARIO` at part of it.
 
 `ha_shell` is the shell runner over `HA/shell`, so it is derived from `conf/shell_ci.conf` the
 same way `shell_heavy` and `shell_long` are, with a 7,200 s case timeout — CTP's own
