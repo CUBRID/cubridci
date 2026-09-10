@@ -19,6 +19,7 @@ RUN set -ex \
                 ncurses-devel ant flex git \
                 rpm-build libtool libtool-ltdl autoconf automake \
                 which ccache \
+                perl-core \
                 java-1.8.0-openjdk-devel \
                 glibc-langpack-en \
         && dnf clean all -y \
