@@ -18,7 +18,7 @@ RUN set -ex \
                 elfutils-libelf-devel systemtap-sdt-devel libstdc++-static \
                 ncurses-devel ant flex git \
                 rpm-build libtool libtool-ltdl autoconf automake \
-                which ccache \
+                which ccache unzip \
                 perl-core \
                 java-1.8.0-openjdk-devel \
                 glibc-langpack-en \
@@ -50,6 +50,22 @@ RUN set -ex \
         && cmake --build build-cmake -j"$(nproc)" \
         && install -s -m 755 build-cmake/ninja /usr/bin/ninja \
         && cd .. && rm -rf ninja-$NINJA_VERSION
+
+# pl_engine's gradle wrapper downloads this every build, with a 10s network timeout.
+# The hash directory name is the wrapper's own base36(md5(distributionUrl)).
+ARG GRADLE_VERSION=8.1.1
+ARG GRADLE_DIST_HASH=9wiye5v2saajue4irfo8ybqfp
+ENV GRADLE_USER_HOME /opt/gradle-home
+RUN set -ex \
+        && dist=$GRADLE_USER_HOME/wrapper/dists/gradle-$GRADLE_VERSION-bin/$GRADLE_DIST_HASH \
+        && mkdir -p "$dist" \
+        && curl -fsSL -o /tmp/gradle.zip \
+             https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip \
+        && unzip -q /tmp/gradle.zip -d "$dist" \
+        && rm -f /tmp/gradle.zip \
+        && "$dist/gradle-$GRADLE_VERSION/bin/gradle" --version > /dev/null \
+        && touch "$dist/gradle-$GRADLE_VERSION-bin.zip.ok" \
+        && chmod -R a+rwX $GRADLE_USER_HOME
 
 ENV WORKDIR /home
 ENV JAVA_HOME /opt/jdk8
