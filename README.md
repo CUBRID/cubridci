@@ -77,9 +77,10 @@ itself. Use `develop`: CTP's `master` has not moved since January 2021.
 case-tree update is one: `test` forces `testcase_update_yn=false` into the conf of every
 shell-runner category — `shell`, `shell_heavy`, `shell_long`, `cci`, `ha_shell`, `rqg`, the only
 ones that read the key — because its upstream default has flipped before and a mounted CTP copy
-brings whatever value its owner left. For `shell` that conf is CTP's own `conf/shell_ci.conf`, so
-a mounted CTP tree is edited in place, as `checkout rqg`'s one-line patch of the generator already
-does. CTP's self-update is the other path, off through `CTP_SKIP_UPDATE=1`.
+brings whatever value its owner left. Every one of those confs is a copy `test` writes, so a
+mounted CTP tree keeps the files CTP ships as they are; `checkout rqg`'s one-line patch of the
+generator is the one edit still made in place. CTP's self-update is the other path, off through
+`CTP_SKIP_UPDATE=1`.
 
 **Running `checkout` a second time does move the tree.** It fetches the branch again and resets to
 the remote tip, so a tree at an earlier commit — or on another branch, if `$BRANCH_TESTCASES`
@@ -104,6 +105,51 @@ variables — and the hash is the identity, since a local branch name only recor
 checkout asked for. **Mount a tree's `.git` along with it**, or its line reads
 `@ unknown -> unknown (no usable git metadata)`; that is a note, not a failure.
 
+### Running part of a category
+
+Two variables narrow a run. Every category but `jdbc` takes `TEST_SCENARIO`, and every category
+but `jdbc` and `sql_by_cci` takes `TEST_EXCLUDE`. `test` reads them, not `checkout`: a path can
+only be checked once the tree holding it is there.
+
+| Variable        | Value                              | Unset                           | Set empty               |
+| --------------- | ---------------------------------- | ------------------------------- | ----------------------- |
+| `TEST_SCENARIO` | absolute path to **one directory** | the category's own scenario     | same as unset           |
+| `TEST_EXCLUDE`  | absolute path to **one file**      | the category's own exclude list | **nothing is excluded** |
+
+`test` checks both before it starts anything: an absolute path, and a directory or a file that is
+really there. A relative path, a missing directory or a missing exclude file stops the run. The
+last of those is deliberately stricter than the runners are — the sql runner excludes nothing at
+all when the file it was handed is missing, and the shell runner dies only once the containers are
+up and the cases are checked out.
+
+`jdbc` refuses both. Its scenario is the project root, `JdbcLocalTest` collects cases by
+annotation rather than by path, so a subdirectory yields no cases at all, and it reads no exclude
+list. `sql_by_cci` refuses `TEST_EXCLUDE`: the key sits in its conf, but `ccqt` is never handed it.
+
+**What a line in an exclude file means differs by runner.** The image passes the file through
+untouched, so it has to be written for the runner that will read it.
+
+| Runner | One line is | A line naming a directory |
+| ------ | ----------- | ------------------------- |
+| `sql`, `medium`, either under `MEMORY_LEAK` | a substring of the case path relative to the scenario root — a `sql/` prefix matches nothing | excludes everything under it |
+| the six shell-runner categories | a substring of the case path, starting at the category directory: `shell/_06_issues/...` | excludes everything it matches |
+| `isolation` | a substring of the `.ctl` path: `_01_ReadCommitted/.../x.ctl` | **one case only** — the first match ends that line |
+| `ha_repl` | a substring of the `.test` path: `sql/_04_.../cases/1005.test` | one case only |
+
+**`isolation` excludes nothing by default**, and neither does the nightly regression: CTP's
+`run_isolation.sh` never writes the key. The cases repo does carry a list of 18 — the cases whose
+`.answer` holds an issue key and nothing else, see [Known limits](#known-limits) — so name it
+yourself to skip them:
+
+```
+-e TEST_EXCLUDE=/home/cubrid-testcases/isolation/config/daily_regression_test_excluded_list_linux.conf
+```
+
+**There is no entry point for a case list.** CTP's `scenario` is one directory, and no runner takes
+a list of cases to include. To run an arbitrary set — the failures of an earlier run, or one
+container's share of a split — build a partial tree on the host and mount it where the cases repo
+goes.
+
 ### Categories
 
 | Category      | Test cases repo               | `GHI_TOKEN` | Cases           | One container | JUnit XML |
@@ -122,15 +168,18 @@ checkout asked for. **Mount a tree's `.git` along with it**, or its line reads
 | `rqg`         | `cubrid-testcases-private`    | **yes**     | 104             | hours (est.)  | yes       |
 
 `shell`, `shell_heavy`, `shell_long`, `isolation`, `ha_shell` and `rqg` are too slow to run
-whole in one run; split them by scenario directory. The other categories finish in one run.
+whole in one run; split them by scenario directory with `$TEST_SCENARIO`, which now reaches
+`shell` too — see [Running part of a category](#running-part-of-a-category). The other categories
+finish in one run.
 
 `shell_heavy` and `shell_long` are the shell runner over other case trees — `shell_heavy` for
 cases that need a lot of disk or memory, `shell_long` for cases that take an hour or more
 each. CTP ships no conf for either, so `test` derives one from `conf/shell_ci.conf` and
 overrides five keys: the scenario, its exclude list, the case timeout (7,200 s for
-`shell_heavy`, 54,000 s for `shell_long`), the retry count (0) and the report label. Point
-`$SHELL_SCENARIO` at a subdirectory to run part of a tree. Their results land under
-`result/shell/`, like `shell`, but the JUnit XML is named after the category.
+`shell_heavy`, 54,000 s for `shell_long`), the retry count (0) and the report label. The other
+categories get a copy of their stock conf at `conf/<category>_runtime.conf`; `test` never edits a
+conf CTP ships. Their results land under `result/shell/`, like `shell`, but the JUnit XML is named
+after the category.
 
 `cci` tests the CCI driver itself: every case compiles a small C program against
 `$CUBRID/include` and `libcascci` and then runs it. It is not `sql_by_cci`, which runs the SQL
@@ -140,13 +189,13 @@ no retry. **It passes no exclude list.** There is no general one in the cases re
 of its 57 branches — and the only lists there belong to the driver-server compatibility test,
 which are keyed by version and stop at 11.2.0. The nightly names a list that is not in the repo
 at all and gets away with it because it does not run cci through CTP; CTP refuses to start when
-that key points at a missing file, so the key is left empty instead. `$SHELL_SCENARIO` runs part of the tree. Results land under
-`result/shell/`, and the report is `test-cci.xml`. A run over more than one case shares one
+that key points at a missing file, so the key is left empty instead. `$TEST_SCENARIO` runs part
+of the tree. Results land under `result/shell/`, and the report is `test-cci.xml`. A run over more than one case shares one
 `ccidb` database, and that costs cases — see the known failures below.
 
-`ha_repl` runs whatever `$HA_SCENARIO` points at, and CTP converts those SQL cases to their HA
-form. The whole default scenario is large: `sql/_01_object` alone is 3,327 cases and took
-2 hours 30 minutes on two containers.
+`ha_repl` runs the public `cubrid-testcases/sql` tree, and CTP converts those SQL cases to their
+HA form. The whole default scenario is large — `sql/_01_object` alone is 3,327 cases and took
+2 hours 30 minutes on two containers — so point `$TEST_SCENARIO` at part of it.
 
 `ha_shell` is the shell runner over `HA/shell`, so it is derived from `conf/shell_ci.conf` the
 same way `shell_heavy` and `shell_long` are, with a 7,200 s case timeout — CTP's own
@@ -154,8 +203,8 @@ same way `shell_heavy` and `shell_long` are, with a 7,200 s case timeout — CTP
 repo. On top of the five shell keys it writes the master node as an env instance and the slave
 as that instance's `relatedhosts`; the ports and the HA port come from the `default.*` keys it
 inherits. Each case builds its own HA pair by calling `setup_ha_environment` from
-`$init_path/make_ha.sh`, which reaches the slave over ssh. `$SHELL_SCENARIO` runs part of the
-tree, and the report is `test-ha_shell.xml` under `result/shell/`.
+`$init_path/make_ha.sh`, which reaches the slave over ssh. The report is `test-ha_shell.xml`
+under `result/shell/`.
 
 `rqg` generates random queries against a database and checks that the server survives them.
 It is the shell runner again — CTP routes `rqg` through it and only splits the result directory
@@ -163,9 +212,7 @@ apart — so its conf comes from `conf/shell_ci.conf` like the other shell varia
 nightly regression's case timeout of 36,000 s and its exclude list,
 `random_query_generator/config/daily_regression_test_exclude_list_RQG.conf`, which is empty
 upstream — so nothing is excluded, and the one known failure below is enough to make a
-whole-tree run exit 1.
-`$SHELL_SCENARIO` runs part of the tree. Results land under `result/rqg/`, and the report is
-`test-rqg.xml`.
+whole-tree run exit 1. Results land under `result/rqg/`, and the report is `test-rqg.xml`.
 
 The generator itself is not in the test-cases repo. It is perl, it lives in
 `cubrid-testtools-internal`, and `checkout rqg` fetches that repo too; `test rqg` points
@@ -211,8 +258,8 @@ that is not a `debug` or `optdebug` build. What the CI publishes as its debug ar
 `test` derives `conf/memoryleak_<category>.conf` from the category's own conf and sets three
 keys — `enable_memory_leak=yes`, and the two `cubrid.conf` parameters the nightly regression
 raises for this run, `log_compress=false` and `shutdown_wait_time_in_secs=2147483647`. Under
-valgrind a shutdown takes far longer than the default wait allows. Point `$MEMORY_SCENARIO` at
-a subdirectory to run part of a tree; the whole of `sql` under valgrind is not practical.
+valgrind a shutdown takes far longer than the default wait allows. Point `$TEST_SCENARIO` at a
+subdirectory to run part of a tree; the whole of `sql` under valgrind is not practical.
 
 The valgrind logs are collected into `$TEST_REPORT` as `memory_<category>_<build>_<timestamp>/`.
 **Leaks do not decide the exit code** — the verdict is the same case-by-case SQL result as a
@@ -223,7 +270,7 @@ all does fail, because the SQL verdict alone would hide it.
 ```console
 $ nerdctl run --rm -v /path/to/CUBRID:/home/CUBRID \
     -e TEST_SUITE=sql -e MEMORY_LEAK=yes \
-    -e MEMORY_SCENARIO=/home/cubrid-testcases/sql/_01_object/_01_type/_004_integer \
+    -e TEST_SCENARIO=/home/cubrid-testcases/sql/_01_object/_01_type/_004_integer \
     cubridci/cubridci:test_rl8.10 test
 ```
 
@@ -337,10 +384,9 @@ $ nerdctl run --rm -v /shared:/shared -e TEST_SUITE=medium -e CODE_COVERAGE=yes 
 | `CUBRID_DATABASES`  | `/home/CUBRID/databases`   | every category — where CUBRID keeps `databases.txt`; `node` and `test` on an HA topology create it and give it to the `qa` account |
 | `HA_NODE_PASSWORD`  | (unset)                    | `node`, and `test ha_repl` / `test ha_shell` — password for the `qa` account |
 | `HA_SLAVE_HOST`     | (unset)                    | `test ha_repl`, `test ha_shell` — hostname of the slave node |
-| `HA_SCENARIO`       | `/home/cubrid-testcases/sql` | `test ha_repl` — scenario path             |
-| `SHELL_SCENARIO`    | the whole category directory | `test shell_heavy`, `test shell_long`, `test cci`, `test ha_shell`, `test rqg` — scenario path |
+| `TEST_SCENARIO`     | the category's own scenario | `test` — the one directory to run instead; every category but `jdbc` |
+| `TEST_EXCLUDE`      | the category's own exclude list | `test` — the exclude list to use instead, empty for none; every category but `jdbc` and `sql_by_cci` |
 | `MEMORY_LEAK`       | `no`                       | `test sql`, `test medium` — run under valgrind |
-| `MEMORY_SCENARIO`   | the one the category's conf holds | `test` with `MEMORY_LEAK=yes` — scenario path |
 | `CODE_COVERAGE`     | `no`                       | `test`, `node`, `coverage` — collect gcov data |
 | `COVERAGE_SRC`      | `/home/cubrid`             | `test`, `node`, `coverage` with `CODE_COVERAGE=yes` — the coverage build's source tree |
 
@@ -439,20 +485,20 @@ docker run --rm --name han1 --hostname han1 \
   -v "$PWD/CUBRID-master:/home/CUBRID" \
   -e HA_NODE_PASSWORD \
   -e HA_SLAVE_HOST=han2 \
-  -e HA_SCENARIO=/home/cubrid-testcases/sql/_01_object \
+  -e TEST_SCENARIO=/home/cubrid-testcases/sql/_01_object \
   cubridci/cubridci:test_rl8.10 \
   bash -lc '/entrypoint.sh checkout ha_repl && /entrypoint.sh test ha_repl'
 ```
 
 `ha_shell` has the same shape. Its cases live in a private repo, so both containers also need
-`GHI_TOKEN`, and the scenario comes from `$SHELL_SCENARIO`:
+`GHI_TOKEN`:
 
 ```bash
 docker run --rm --name has1 --hostname has1 \
   -v "$PWD/CUBRID-master:/home/CUBRID" \
   -e HA_NODE_PASSWORD -e GHI_TOKEN \
   -e HA_SLAVE_HOST=has2 \
-  -e SHELL_SCENARIO=/home/cubrid-testcases-private/HA/shell/_22_ha \
+  -e TEST_SCENARIO=/home/cubrid-testcases-private/HA/shell/_22_ha \
   cubridci/cubridci:test_rl8.10 \
   bash -lc '/entrypoint.sh checkout ha_shell && /entrypoint.sh test ha_shell'
 ```
@@ -531,7 +577,3 @@ injected build replaced by the shims. `test` refuses to start when it finds them
 CUBRID, or rename the two files back by hand.
 
 **A JUnit XML absence is not an error.** isolation, sql_by_cci and ha_repl write none.
-
-**There is no entry point for a case list yet.** `$HA_SCENARIO` becomes CTP's `scenario=`, which
-is a single directory. Splitting a category across containers means splitting it by scenario
-directory.

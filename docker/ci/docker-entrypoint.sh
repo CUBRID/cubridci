@@ -19,14 +19,14 @@ need it on every host the controller does not run on. Required env:
   HA_NODE_PASSWORD  password of the node account ($NODE_USER)
 'test ha_repl' and 'test ha_shell' also read:
   HA_SLAVE_HOST     hostname of the slave node
-'test ha_repl' also reads:
-  HA_SCENARIO       scenario path (default: $WORKDIR/cubrid-testcases/sql)
-'test shell_heavy', 'test shell_long', 'test cci', 'test ha_shell' and
-'test rqg' also read:
-  SHELL_SCENARIO    scenario path (default: the whole category directory)
 
-MEMORY_LEAK=yes runs 'test sql' and 'test medium' under valgrind. It also reads:
-  MEMORY_SCENARIO   scenario path (default: the one the category's conf holds)
+'test' narrows a run with:
+  TEST_SCENARIO     absolute path to the one directory to run
+                    (default: the category's own scenario; not for jdbc)
+  TEST_EXCLUDE      absolute path to the exclude list to use, empty for none
+                    (default: the category's own; not for jdbc or sql_by_cci)
+
+MEMORY_LEAK=yes runs 'test sql' and 'test medium' under valgrind.
 
 CODE_COVERAGE=yes collects gcov data after 'test', for any category. It needs a
 coverage build injected at $CUBRID and that build's tree at the same path it was
@@ -47,13 +47,16 @@ function resolve_category ()
   case "$TEST_SUITE" in
     sql)
       TC_REPO=cubrid-testcases            CTP_CMD=sql
-      CTP_CONF=conf/sql.conf              REPORT_STYLE=sqlresult ;;
+      CONF_SRC=conf/sql.conf              CTP_CONF=conf/sql_runtime.conf
+      CONF_WRITER=copy_conf               REPORT_STYLE=sqlresult ;;
     medium)
       TC_REPO=cubrid-testcases            CTP_CMD=medium
-      CTP_CONF=conf/medium_dev.conf       REPORT_STYLE=sqlresult ;;
+      CONF_SRC=conf/medium_dev.conf       CTP_CONF=conf/medium_runtime.conf
+      CONF_WRITER=copy_conf               REPORT_STYLE=sqlresult ;;
     shell)
       TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
-      CTP_CONF=conf/shell_ci.conf         REPORT_STYLE=status ;;
+      CONF_SRC=conf/shell_ci.conf         CTP_CONF=conf/shell_runtime.conf
+      CONF_WRITER=copy_conf               REPORT_STYLE=status ;;
     shell_heavy)
       TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
       CTP_CONF=conf/shell_heavy_ci.conf   REPORT_STYLE=status
@@ -75,10 +78,12 @@ function resolve_category ()
       SHELL_TIMEOUT=7200 ;;
     isolation)
       TC_REPO=cubrid-testcases            CTP_CMD=isolation
-      CTP_CONF=conf/isolation.conf        REPORT_STYLE=status ;;
+      CONF_SRC=conf/isolation.conf        CTP_CONF=conf/isolation_runtime.conf
+      CONF_WRITER=copy_conf               REPORT_STYLE=status ;;
     sql_by_cci)
       TC_REPO=cubrid-testcases            CTP_CMD=sql_by_cci
-      CTP_CONF=conf/sql_by_cci.conf       REPORT_STYLE=cciresult ;;
+      CONF_SRC=conf/sql_by_cci.conf       CTP_CONF=conf/sql_by_cci_runtime.conf
+      CONF_WRITER=copy_conf               REPORT_STYLE=cciresult ;;
     jdbc)
       TC_REPO=cubrid-testcases-private    CTP_CMD=jdbc
       CTP_CONF=conf/jdbc.conf             REPORT_STYLE=status ;;
@@ -124,7 +129,9 @@ function resolve_category ()
       sql|medium) ;;
       *) echo "** ERROR: MEMORY_LEAK does not apply to '$TEST_SUITE'; only sql and medium" >&2; exit 1 ;;
     esac
-    MEMORY_SRC_CONF=$CTP_CONF
+    # write_memory_conf copies the stock conf itself, so no copy step runs before it.
+    MEMORY_SRC_CONF=$CONF_SRC
+    CONF_WRITER=
     CTP_CONF=conf/memoryleak_$TEST_SUITE.conf
   fi
 
@@ -253,7 +260,7 @@ function prepare_node ()
   [ -x "$CUBRID/bin/cubrid_rel" ] \
     || { echo "** ERROR: no CUBRID at $CUBRID; inject a build before 'node'" >&2; exit 1; }
   [ -d "$CTP_HOME" ] \
-    || { echo "** ERROR: no CTP at $CTP_HOME; run 'checkout' first" >&2; exit 1; }
+    || { echo "** ERROR: no CTP at $CTP_HOME; run 'checkout' or mount a CTP tree there" >&2; exit 1; }
   [ -n "$HA_NODE_PASSWORD" ] \
     || { echo "** ERROR: HA_NODE_PASSWORD is required to set up the node account" >&2; exit 1; }
 
@@ -292,6 +299,18 @@ function prepare_node ()
   echo "[node] $NODE_USER@$(hostname) ready"
 }
 
+# The scope options write a value that differs from run to run, and a mounted CTP tree survives its
+# run, so the edit has to land on a copy: otherwise the next run there starts from the last one's.
+function copy_conf ()
+{
+  local src="$CTP_HOME/$CONF_SRC" dst="$CTP_HOME/$CTP_CONF"
+  [ -f "$src" ] \
+    || { echo "** ERROR: $src not found; cannot derive $CTP_CONF" >&2; exit 1; }
+  cp -f "$src" "$dst" \
+    || { echo "** ERROR: cannot write $dst" >&2; exit 1; }
+  echo "[conf] $CTP_CONF <- $CONF_SRC"
+}
+
 # Without at least one env.<id>.{cubrid,ha,broker*} key CTP skips its whole node
 # configuration step, leaving cubrid_ha.conf empty and ha_mode off. The exclude list is
 # the one the nightly regression uses, so both agree on which cases are known to fail.
@@ -313,7 +332,7 @@ env.ha1.ha.ha_port_id=58091
 env.ha1.broker1.SERVICE=OFF
 env.ha1.broker2.APPL_SERVER_SHM_ID=31091
 env.ha1.broker2.BROKER_PORT=31091
-scenario=${HA_SCENARIO:-$WORKDIR/$TC_REPO/sql}
+scenario=$WORKDIR/$TC_REPO/sql
 testcase_exclude_from_file=$WORKDIR/$TC_REPO/sql/config/daily_regression_test_exclude_list_ha_repl.conf
 EOF
   echo "[conf] $CTP_HOME/$CTP_CONF -> master $(hostname), slave $HA_SLAVE_HOST"
@@ -330,7 +349,7 @@ function write_shell_conf ()
   [ -f "$src" ] \
     || { echo "** ERROR: $src not found; cannot derive $CTP_CONF" >&2; exit 1; }
 
-  local scenario=${SHELL_SCENARIO:-$SHELL_ROOT}
+  local scenario=$SHELL_ROOT
   # An empty SHELL_EXCLUDE is how a category says it has no exclude list, so only an unset one
   # falls back to the usual path. CTP skips the file when the key is empty and fails on a
   # missing one, so a category without a list has to leave the key empty, not point at nothing.
@@ -387,6 +406,84 @@ function pin_testcase_source ()
     || { echo "** ERROR: $CTP_CONF lacks 'testcase_update_yn=false';" \
               "check conf/shell_ci.conf upstream" >&2; exit 1; }
   echo "[pin] $conf -> testcase_update_yn=false"
+}
+
+# Runs before the first node is touched, so a path this container cannot use stops the run while it
+# is still this container's business alone.
+function check_scope ()
+{
+  local old
+  for old in HA_SCENARIO SHELL_SCENARIO MEMORY_SCENARIO; do
+    [ -z "${!old+set}" ] \
+      || { echo "** ERROR: $old is gone; use TEST_SCENARIO" >&2; exit 1; }
+  done
+
+  case "$TEST_SUITE" in
+    jdbc)
+      [ -z "$TEST_SCENARIO" ] && [ -z "${TEST_EXCLUDE+set}" ] \
+        || { echo "** ERROR: TEST_SCENARIO and TEST_EXCLUDE do not apply to jdbc; its scenario is" \
+                  "fixed to the project root and it has no exclude list" >&2; exit 1; } ;;
+    sql_by_cci)
+      [ -z "${TEST_EXCLUDE+set}" ] \
+        || { echo "** ERROR: TEST_EXCLUDE does not apply to sql_by_cci;" \
+                  "ccqt takes no exclude list" >&2; exit 1; } ;;
+  esac
+
+  if [ -n "$TEST_SCENARIO" ]; then
+    case "$TEST_SCENARIO" in /*) [ -d "$TEST_SCENARIO" ] ;; *) false ;; esac \
+      || { echo "** ERROR: TEST_SCENARIO '$TEST_SCENARIO' is not an absolute path to a directory" >&2; exit 1; }
+  fi
+  # An exclude list CTP cannot open costs a whole run: the sql runner quietly excludes nothing,
+  # the shell runner dies before the first case.
+  if [ -n "$TEST_EXCLUDE" ]; then
+    case "$TEST_EXCLUDE" in /*) [ -f "$TEST_EXCLUDE" ] ;; *) false ;; esac \
+      || { echo "** ERROR: TEST_EXCLUDE '$TEST_EXCLUDE' is not an absolute path to a file" >&2; exit 1; }
+  fi
+}
+
+# sed rather than ini.sh: a key renamed upstream leaves sed a no-op, which the read-back below
+# catches, where ini.sh would insert the dead key and satisfy any check of it. And ini.sh writes
+# no empty value, which is how "exclude nothing" is said.
+function set_conf_key ()
+{
+  local key=$1 val=$2
+  local conf="$CTP_HOME/$CTP_CONF"
+
+  # The value is the caller's path: in a replacement text & repeats the match and | ends the s.
+  local esc=${val//\\/\\\\}
+  esc=${esc//&/\\&}
+  esc=${esc//|/\\|}
+  sed -i "s|^$key[[:space:]]*=.*|$key=$esc|" "$conf"
+  grep -qxF "$key=$val" "$conf" \
+    || { echo "** ERROR: $CTP_CONF lacks '$key=$val'; check the CTP conf upstream" >&2; exit 1; }
+}
+
+function apply_scope ()
+{
+  [ -n "$TEST_SCENARIO" ] || [ -n "${TEST_EXCLUDE+set}" ] || return 0
+
+  local conf="$CTP_HOME/$CTP_CONF"
+  [ -f "$conf" ] \
+    || { echo "** ERROR: $conf not found; cannot narrow the run" >&2; exit 1; }
+
+  local shown_scenario='(unchanged)' shown_exclude='(unchanged)'
+  if [ -n "$TEST_SCENARIO" ]; then
+    set_conf_key scenario "$TEST_SCENARIO"
+    shown_scenario=$TEST_SCENARIO
+  fi
+  if [ -n "${TEST_EXCLUDE+set}" ]; then
+    # isolation is the one conf that ships without the key, by design - its runner reads it and
+    # takes an empty value as "exclude nothing". Appending wherever a key is missing would turn a
+    # rename upstream into a dead key beside the live one. sed, not >>, because that conf ends
+    # without a newline; two calls, because a $a in the same call is dropped when d fires there.
+    if [ "$CTP_CMD" = isolation ]; then
+      sed -i '/^testcase_exclude_from_file[[:space:]]*=/d' "$conf"
+      sed -i '$a testcase_exclude_from_file=' "$conf"
+    fi
+    set_conf_key testcase_exclude_from_file "$TEST_EXCLUDE"
+    shown_exclude=${TEST_EXCLUDE:-'(none)'}
+  fi
+  echo "[scope] $CTP_CONF -> scenario=$shown_scenario testcase_exclude_from_file=$shown_exclude"
 }
 
 # safe.directory because what usually stops git here is a host tree's ownership, not a missing .git.
@@ -469,11 +566,7 @@ function write_memory_conf ()
   [ -n "$(ini.sh -s sql "$src" enable_memory_leak)" ] \
     || { echo "** ERROR: $MEMORY_SRC_CONF has no enable_memory_leak key; check the CTP conf upstream" >&2; exit 1; }
 
-  local sql_keys="enable_memory_leak=yes"
-  if [ -n "$MEMORY_SCENARIO" ]; then
-    sql_keys="$sql_keys||scenario=$MEMORY_SCENARIO"
-  fi
-  ini.sh -s sql -u "$sql_keys" "$dst"
+  ini.sh -s sql -u "enable_memory_leak=yes" "$dst"
   ini.sh -s sql/cubrid.conf -u "log_compress=false||shutdown_wait_time_in_secs=2147483647" "$dst"
 
   local got
@@ -481,7 +574,7 @@ function write_memory_conf ()
   [ "$got" = "yes" ] \
     || { echo "** ERROR: $CTP_CONF has enable_memory_leak='$got'; ini.sh did not write it" >&2; exit 1; }
 
-  echo "[conf] $dst -> valgrind on, scenario $(ini.sh -s sql "$dst" scenario)"
+  echo "[conf] $dst -> valgrind on"
 }
 
 # The .gcda paths are compiled into the binaries, so the tree has to sit where it was built.
@@ -832,6 +925,8 @@ function run_test ()
     || { echo "** ERROR: no testcases at $WORKDIR/$TC_REPO;" \
               "run 'checkout' or mount a testcases tree there" >&2; exit 1; }
 
+  check_scope
+
   RUN_STAMP=$(mktemp)
   trap 'rm -f "$RUN_STAMP"' EXIT
 
@@ -862,6 +957,9 @@ function run_test ()
     check_memory_env
     write_memory_conf
   fi
+
+  # Last of the conf steps: the memory-leak conf does not exist until the one above has run.
+  apply_scope
 
   # rqg cases kill the server mid-run and then read the cores it left.
   if [ -n "$NEEDS_DEBUG" ]; then
