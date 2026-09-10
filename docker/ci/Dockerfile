@@ -51,10 +51,8 @@ RUN set -ex \
         && install -s -m 755 build-cmake/ninja /usr/bin/ninja \
         && cd .. && rm -rf ninja-$NINJA_VERSION
 
-# pl_engine's gradle wrapper fetches this distribution from services.gradle.org on
-# every build, and its networkTimeout is 10s: the most frequent build failure here.
-# The hash directory is the wrapper's own name for the URL, base36(md5(url)) -- a
-# version bump in the engine misses this copy and downloads as it does today.
+# pl_engine's gradle wrapper downloads this every build, with a 10s network timeout.
+# The hash directory name is the wrapper's own base36(md5(distributionUrl)).
 ARG GRADLE_VERSION=8.1.1
 ARG GRADLE_DIST_HASH=9wiye5v2saajue4irfo8ybqfp
 ENV GRADLE_USER_HOME /opt/gradle-home
