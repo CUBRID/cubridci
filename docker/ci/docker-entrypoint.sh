@@ -121,165 +121,48 @@ function check_history ()
   return 1
 }
 
-# PROTOTYPE: preserve CMake ExternalProject's complete third-party tree between builds.
-# This deliberately lives beside run_build so a follow-up can replace or discard it
-# without changing CUBRID's build.sh interface.
-function set_thirdparty_build_layout ()
+function enable_ci_prebuilt_thirdparty ()
 {
-  local opt target=x86_64 mode=release source_dir=$PWD build_dir=
-  local OPTIND=1
+  local revision=${CUBRID_CI_3RDPARTY_REVISION:-}
+  local root=/opt/cubrid-thirdparty
 
-  while getopts ":t:m:g:is:b:p:o:aj:c:C:z:xvh" opt; do
-    case "$opt" in
-      t) target=$OPTARG ;;
-      m) mode=$OPTARG ;;
-      s) source_dir=$OPTARG ;;
-      b) build_dir=$OPTARG ;;
-      g|i|a|p|o|j|c|C|z|x|v|h) ;;
-      \?|:)
-        echo "[3rdparty-archive] error: cannot derive the build directory from option '-$OPTARG'" >&2
-        return 1
-        ;;
-    esac
-  done
-
-  case "$target" in
-    i386|x86|32|32bit) target=i386 ;;
-    x86_64|x64|64|64bit) target=x86_64 ;;
-  esac
-
-  THIRDPARTY_SOURCE_DIR=$(readlink -m "$source_dir") || return 1
-  if [ -n "$build_dir" ]; then
-    THIRDPARTY_BUILD_DIR=$(readlink -m "$build_dir") || return 1
-  else
-    THIRDPARTY_BUILD_DIR="$THIRDPARTY_SOURCE_DIR/build_${target}_${mode}"
-  fi
-}
-
-function thirdparty_archive_manifest ()
-{
-  local thirdparty_sha packages
-
-  [ -f "$THIRDPARTY_SOURCE_DIR/3rdparty/CMakeLists.txt" ] \
-    || { echo "[3rdparty-archive] error: cannot find 3rdparty/CMakeLists.txt under $THIRDPARTY_SOURCE_DIR" >&2; return 1; }
-
-  thirdparty_sha=$(sha256sum "$THIRDPARTY_SOURCE_DIR/3rdparty/CMakeLists.txt" | awk '{print $1}') \
-    || return 1
-  packages=$(rpm -q gcc gcc-c++ glibc cmake zstd 2> /dev/null | sort | tr '\n' ' ') \
-    || return 1
-
-  echo "schema=cubrid-3rdparty-archive-poc-v1"
-  echo "source_dir=$THIRDPARTY_SOURCE_DIR"
-  echo "build_dir=$THIRDPARTY_BUILD_DIR"
-  echo "thirdparty_cmake_sha256=$thirdparty_sha"
-  echo "platform=$(uname -s)-$(uname -m)"
-  echo "compiler_target=$(gcc -dumpmachine)"
-  echo "compiler_version=$(gcc -dumpfullversion -dumpversion)"
-  echo "cmake_version=$(cmake --version | sed -n '1p')"
-  echo "packages=$packages"
-  printf 'CC=%q\nCXX=%q\nCFLAGS=%q\nCXXFLAGS=%q\nLDFLAGS=%q\n' \
-    "${CC:-}" "${CXX:-}" "${CFLAGS:-}" "${CXXFLAGS:-}" "${LDFLAGS:-}"
-  printf 'build_args='
-  printf '%q ' "$@"
-  printf '\n'
-}
-
-function publish_thirdparty_archive ()
-{
-  local archive_root=$1 entry=$2 manifest=$3
-  local stage
-  stage="$archive_root/.tmp-$(basename "$entry")-$$-$RANDOM"
-
-  if ! mkdir -p "$archive_root/v1" || ! mkdir "$stage"; then
-    echo "[3rdparty-archive] warning: cannot create a publication staging directory" >&2
-    return 0
-  fi
-
-  printf '%s\n' "$manifest" > "$stage/manifest.txt"
-  if ! tar -C "$THIRDPARTY_BUILD_DIR" -cf - 3rdparty \
-    | zstd -T0 -3 -q -o "$stage/thirdparty.tar.zst"
-  then
-    echo "[3rdparty-archive] warning: could not create the zstd archive" >&2
-    rm -rf "$stage"
-    return 0
-  fi
-
-  if ! (cd "$stage" \
-    && sha256sum thirdparty.tar.zst > thirdparty.tar.zst.sha256 \
-    && touch complete)
-  then
-    echo "[3rdparty-archive] warning: could not finish the staged entry" >&2
-    rm -rf "$stage"
-    return 0
-  fi
-
-  if mv -T "$stage" "$entry" 2> /dev/null; then
-    echo "[3rdparty-archive] published $(basename "$entry")"
-  else
-    echo "[3rdparty-archive] another publisher already owns $(basename "$entry")"
-    rm -rf "$stage"
-  fi
-}
-
-function run_build_with_thirdparty_archive ()
-{
-  if [ -z "${CUBRID_3RDPARTY_ARCHIVE_DIR+x}" ]; then
-    if [ "${CUBRID_3RDPARTY_ARCHIVE_PUBLISH:-false}" = true ]; then
-      echo "[3rdparty-archive] error: PUBLISH=true requires CUBRID_3RDPARTY_ARCHIVE_DIR" >&2
+  if [ -z "$revision" ]; then
+    if [ -s "$root/share/cubrid-thirdparty/manifest.json" ]; then
+      echo "[ci-prebuilt-3rdparty] error: the image has a prefix but no producer revision" >&2
       return 1
     fi
-    ./build.sh -p "$CUBRID" "$@" clean build
-    return
+    if [ -n "${CUBRID_3RDPARTY_MODE+x}" ] && [ "$CUBRID_3RDPARTY_MODE" != EXTERNAL ]; then
+      echo "[ci-prebuilt-3rdparty] error: this image has no baked prefix; mode must be unset or EXTERNAL" >&2
+      return 1
+    fi
+    if [ -n "${CUBRID_3RDPARTY_ROOT+x}" ]; then
+      echo "[ci-prebuilt-3rdparty] error: the root is set, but this image has no baked prefix" >&2
+      return 1
+    fi
+    return 0
   fi
 
-  local archive_root=$CUBRID_3RDPARTY_ARCHIVE_DIR
-  [ -n "$archive_root" ] \
-    || { echo "[3rdparty-archive] error: CUBRID_3RDPARTY_ARCHIVE_DIR is empty" >&2; return 1; }
-  [ -d "$archive_root" ] && [ -r "$archive_root" ] \
-    || { echo "[3rdparty-archive] error: archive directory is missing or unreadable: $archive_root" >&2; return 1; }
-  command -v zstd > /dev/null \
-    || { echo "[3rdparty-archive] error: zstd is required when archive reuse is enabled" >&2; return 1; }
-  if [ "${CUBRID_3RDPARTY_ARCHIVE_PUBLISH:-false}" = true ] && [ ! -w "$archive_root" ]; then
-    echo "[3rdparty-archive] error: publisher cannot write archive directory: $archive_root" >&2
+  if [ -n "${CUBRID_3RDPARTY_MODE+x}" ] && [ "$CUBRID_3RDPARTY_MODE" != CI_PREBUILT ]; then
+    echo "[ci-prebuilt-3rdparty] error: mode must be CI_PREBUILT for this image" >&2
+    return 1
+  fi
+  if [ -n "${CUBRID_3RDPARTY_ROOT+x}" ] && [ "$CUBRID_3RDPARTY_ROOT" != "$root" ]; then
+    echo "[ci-prebuilt-3rdparty] error: root must be $root for this image" >&2
     return 1
   fi
 
-  set_thirdparty_build_layout "$@" || return 1
+  [ -d "$root/include" ] \
+    || { echo "[ci-prebuilt-3rdparty] error: missing $root/include" >&2; return 1; }
+  [ -d "$root/lib" ] \
+    || { echo "[ci-prebuilt-3rdparty] error: missing $root/lib" >&2; return 1; }
+  [ -s "$root/share/cubrid-thirdparty/manifest.json" ] \
+    || { echo "[ci-prebuilt-3rdparty] error: missing manifest.json under $root" >&2; return 1; }
+  [ -s "$root/share/cubrid-thirdparty/provenance.json" ] \
+    || { echo "[ci-prebuilt-3rdparty] error: missing provenance.json under $root" >&2; return 1; }
 
-  local manifest key entry hit=false
-  manifest=$(thirdparty_archive_manifest "$@") || return 1
-  key=$(printf '%s\n' "$manifest" | sha256sum | awk '{print $1}') || return 1
-  entry="$archive_root/v1/$key"
-
-  echo "[3rdparty-archive] key=$key build_dir=$THIRDPARTY_BUILD_DIR"
-  ./build.sh -p "$CUBRID" "$@" clean || return 1
-
-  if [ -f "$entry/complete" ] \
-    && (cd "$entry" && sha256sum -c thirdparty.tar.zst.sha256 > /dev/null 2>&1)
-  then
-    mkdir -p "$THIRDPARTY_BUILD_DIR"
-    if zstd -dc "$entry/thirdparty.tar.zst" | tar -xf - -C "$THIRDPARTY_BUILD_DIR"; then
-      hit=true
-      echo "[3rdparty-archive] hit: restored $key"
-    else
-      echo "[3rdparty-archive] warning: extraction failed; rebuilding from scratch" >&2
-      rm -rf "$THIRDPARTY_BUILD_DIR/3rdparty"
-    fi
-  elif [ -e "$entry" ]; then
-    echo "[3rdparty-archive] warning: incomplete or corrupt entry; rebuilding from scratch" >&2
-  else
-    echo "[3rdparty-archive] miss: no entry for $key"
-  fi
-
-  ./build.sh -p "$CUBRID" "$@" build || return 1
-
-  if [ "$hit" = false ] && [ "${CUBRID_3RDPARTY_ARCHIVE_PUBLISH:-false}" = true ]; then
-    if [ -d "$THIRDPARTY_BUILD_DIR/3rdparty" ]; then
-      publish_thirdparty_archive "$archive_root" "$entry" "$manifest"
-    else
-      echo "[3rdparty-archive] warning: build succeeded without a third-party tree to publish" >&2
-    fi
-  fi
+  export CUBRID_3RDPARTY_MODE=CI_PREBUILT
+  export CUBRID_3RDPARTY_ROOT=$root
+  echo "[ci-prebuilt-3rdparty] mode=$CUBRID_3RDPARTY_MODE root=$root producer=$revision"
 }
 
 function run_build ()
@@ -294,11 +177,12 @@ function run_build ()
     return 1
   fi
 
+  enable_ci_prebuilt_thirdparty || return 1
   check_history $CUBRID_SRCDIR || return 1
 
   if ! (cd $CUBRID_SRCDIR \
-    && run_build_with_thirdparty_archive "$@") 2>&1 | tee build.log \
-      | { grep -e '^\[3rdparty-archive\]' -e '\[[ 0-9]\+%\]' -e ' error: ' -e '\[[0-9]\+\/[0-9]\+\]' || true; }
+    && ./build.sh -p $CUBRID $@ clean build) 2>&1 | tee build.log \
+      | { grep -e '^\[ci-prebuilt-3rdparty\]' -e '\[[ 0-9]\+%\]' -e ' error: ' -e '\[[0-9]\+\/[0-9]\+\]' || true; }
   then
     tail -500 build.log
     return 1

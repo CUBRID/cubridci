@@ -57,44 +57,40 @@ arguments pass straight through to `build.sh`; run `./build.sh -h` for the list.
 The exit code is 0 on success and non-zero on failure. On a build failure the last 500 lines of
 `build.log` are printed.
 
-### Prototype: reuse the third-party build tree
+### Prototype: bake a third-party prefix into the image
 
-> **POC only.** This demonstrates the expected entrypoint change for follow-up work under CUBRIDQA-1613. It
-> has not been qualified against the production Kubernetes storage and is not proposed as finished production code.
+> **POC only.** This shows the cubridci half of the interface proposed by CUBRIDQA-1613. The normal Jenkins build leaves
+> it disabled until the matching CUBRID source changes exist.
 
-Set `CUBRID_3RDPARTY_ARCHIVE_DIR` to an existing shared directory to preserve the complete
-`build_<target>_<mode>/3rdparty/` tree as a content-addressed archive. An unset variable keeps the current `clean build`
-path unchanged. A set but missing or unreadable directory is an error so a missing mount is visible immediately.
-
-Normal jobs are read-only consumers. Set exact `CUBRID_3RDPARTY_ARCHIVE_PUBLISH=true` only on a trusted seed or develop
-job to let a successful cold build publish an entry:
+Build an opt-in POC image with a full CUBRID commit SHA:
 
 ```bash
-docker run --rm \
-  -v "$PWD/workspace:/home" \
-  -v "$PWD/thirdparty-archives:/archives" \
-  -e CUBRID_3RDPARTY_ARCHIVE_DIR=/archives \
-  -e CUBRID_3RDPARTY_ARCHIVE_PUBLISH=true \
-  cubridci/cubridci:build_rl8.10 build
+docker build \
+  --build-arg CUBRID_3RDPARTY_REVISION=<40-character-commit-sha> \
+  -t cubridci/cubridci:build_rl8.10-ci-prebuilt-poc \
+  docker/ci
 ```
 
-The POC runs `build.sh clean`, restores `build/3rdparty` into the pod-local build tree on a verified hit, and then runs
-`build.sh build`. On a trusted miss it writes `manifest.txt`, `thirdparty.tar.zst`, its SHA-256, and a completion marker
-to a private staging directory before renaming that directory to its final key. CUBRID already builds most bundled
-dependencies as static libraries; unixODBC remains the existing shared-library exception. The archive preserves those
-outputs and their ExternalProject state without changing the final CUBRID build artifacts or link mode.
+The Docker builder stage checks out that immutable revision and expects it to provide:
 
-The image installs `zstd` because a completed third-party tree is hundreds of MiB and warm restoration happens more
-often than publication. Fast zstd decompression reduces both elapsed time and shared-storage traffic; level 3 keeps the
-less frequent publication path inexpensive.
+- a canonical `3rdparty/manifest.json`;
+- a `cubrid_thirdparty_prefix` target that writes a normalized prefix to
+  `CUBRID_3RDPARTY_PREFIX_OUTPUT`; and
+- CMake support for `CUBRID_3RDPARTY_MODE=CI_PREBUILT` and `CUBRID_3RDPARTY_ROOT`.
 
-The content key covers the third-party CMake input, runtime toolchain packages, relevant build arguments and flags, and
-absolute source/build paths. It deliberately does not include the CUBRID commit, so ordinary engine changes can reuse
-the same dependency archive.
+Only the generated `include/`, `lib/`, manifest, provenance and license files enter the final image at
+`/opt/cubrid-thirdparty`. Downloads, sources, objects and ExternalProject stamps remain in the discarded builder stage.
+On `build`, the entrypoint validates the baked prefix and exports the CI-prebuilt mode and root before invoking the
+unchanged `./build.sh ... clean build` command. The corresponding CUBRID CMake implementation must compare the source
+and image manifest fingerprints and fail without a source-build fallback when they differ.
 
-Follow-up work must validate atomic rename on the real shared filesystem, define trusted publisher injection and
-retention, harden archive extraction and corrupt-entry repair, add automated entrypoint coverage, and qualify real cold
-and warm release/optdebug builds. The POC never deletes completed shared entries.
+An empty `CUBRID_3RDPARTY_REVISION`, including the existing Jenkins invocation, preserves the current image and build
+behavior. A configured image with missing prefix metadata fails before `build.sh` starts. Release and OptDebug are
+expected to share the same prefix; existing linkage remains unchanged, including unixODBC's shared linkage.
+
+This design is independent of ccache and does not use an archive, zstd, shared volume, restore or publication step for
+third-party reuse. A dependency update is paid once while building the image; ordinary CI pods consume the expanded
+prefix directly.
 
 ### checkout
 
