@@ -86,9 +86,8 @@ RUN set -ex \
         && echo 'ZONE="Asia/Seoul"' > /etc/sysconfig/clock \
         && chmod 777 $WORKDIR
 
-# POC for CUBRIDQA-1613. The normal Jenkins build leaves this argument empty, so
-# the current build_rl8.10 image remains usable until the matching CUBRID changes
-# land. A POC image supplies the full commit SHA that owns all three interfaces:
+# CUBRIDQA-1613 production integration. Jenkins supplies the exact qualified
+# commit and manifest fingerprint that own all three interfaces:
 #
 #   * 3rdparty/manifest.json
 #   * the cubrid_thirdparty_prefix producer target
@@ -100,13 +99,22 @@ FROM build-environment AS thirdparty-prefix-builder
 
 ARG CUBRID_REPOSITORY=https://github.com/CUBRID/cubrid.git
 ARG CUBRID_3RDPARTY_REVISION=
+ARG CUBRID_3RDPARTY_FINGERPRINT=
+ARG CUBRID_3RDPARTY_COMPATIBILITY_BUILD=0
 
+COPY validate-thirdparty-prefix.py /usr/local/bin/validate-cubrid-thirdparty-prefix
+
+# CUBRID's configure generates cubrid-cci/win/cci_version.h. Admit and restore
+# only that exact known side effect so provenance still records a clean commit.
 RUN set -eux; \
         mkdir -p /opt/cubrid-thirdparty; \
-        if [ -z "$CUBRID_3RDPARTY_REVISION" ]; then \
-          echo '[thirdparty-prefix] disabled: CUBRID_3RDPARTY_REVISION is empty'; \
+        if [ "$CUBRID_3RDPARTY_COMPATIBILITY_BUILD" = 1 ]; then \
+          test -z "$CUBRID_3RDPARTY_REVISION"; \
+          test -z "$CUBRID_3RDPARTY_FINGERPRINT"; \
+          echo '[thirdparty-prefix] disabled by explicit compatibility build'; \
           exit 0; \
         fi; \
+        test "$CUBRID_3RDPARTY_COMPATIBILITY_BUILD" = 0; \
         if [ "${#CUBRID_3RDPARTY_REVISION}" -ne 40 ]; then \
           echo 'CUBRID_3RDPARTY_REVISION must be a full 40-character lowercase commit SHA' >&2; \
           exit 1; \
@@ -117,40 +125,61 @@ RUN set -eux; \
             exit 1 \
             ;; \
         esac; \
+        if [ "${#CUBRID_3RDPARTY_FINGERPRINT}" -ne 64 ]; then \
+          echo 'CUBRID_3RDPARTY_FINGERPRINT must be a lowercase SHA-256' >&2; \
+          exit 1; \
+        fi; \
+        case "$CUBRID_3RDPARTY_FINGERPRINT" in \
+          *[!0-9a-f]*) \
+            echo 'CUBRID_3RDPARTY_FINGERPRINT must be a lowercase SHA-256' >&2; \
+            exit 1 \
+            ;; \
+        esac; \
         git init -q /tmp/cubrid-src; \
         cd /tmp/cubrid-src; \
         git remote add origin "$CUBRID_REPOSITORY"; \
         git -c fetch.parallel=0 fetch -q --depth=1 origin "$CUBRID_3RDPARTY_REVISION"; \
         git checkout -q --detach FETCH_HEAD; \
+        git rev-parse HEAD > /tmp/cubrid-revision; \
+        grep -Fx "$CUBRID_3RDPARTY_REVISION" /tmp/cubrid-revision; \
         git submodule update -q --init --depth=1; \
         CC=gcc CXX=g++ cmake -S /tmp/cubrid-src -B /tmp/cubrid-build -G Ninja \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo \
           -DCUBRID_3RDPARTY_PREFIX_OUTPUT=/opt/cubrid-thirdparty; \
+        git status --porcelain=v1 --untracked-files=all > /tmp/cubrid-status; \
+        printf '%s\n' ' M cubrid-cci' | cmp -s - /tmp/cubrid-status; \
+        git -C cubrid-cci status --porcelain=v1 --untracked-files=all > /tmp/cubrid-cci-status; \
+        printf '%s\n' ' M win/cci_version.h' | cmp -s - /tmp/cubrid-cci-status; \
+        git -C cubrid-cci restore -- win/cci_version.h; \
+        git status --porcelain=v1 --untracked-files=all > /tmp/cubrid-status; \
+        test ! -s /tmp/cubrid-status; \
         cmake --build /tmp/cubrid-build --target cubrid_thirdparty_prefix; \
-        test -d /opt/cubrid-thirdparty/include; \
-        test -d /opt/cubrid-thirdparty/lib; \
-        test -d /opt/cubrid-thirdparty/licenses; \
-        for library in libexpat.a libedit.a liblz4.a libssl.a libcrypto.a libodbc.so libre2.a libtbb.a; do \
-          test -e "/opt/cubrid-thirdparty/lib/$library"; \
-        done; \
-        test -e /opt/cubrid-thirdparty/include/rapidjson/document.h; \
-        test -s /opt/cubrid-thirdparty/share/cubrid-thirdparty/manifest.json; \
-        test -s /opt/cubrid-thirdparty/share/cubrid-thirdparty/provenance.json
+        git status --porcelain=v1 --untracked-files=all > /tmp/cubrid-status; \
+        test ! -s /tmp/cubrid-status; \
+        python3 /usr/local/bin/validate-cubrid-thirdparty-prefix \
+          --root /opt/cubrid-thirdparty \
+          --revision "$CUBRID_3RDPARTY_REVISION" \
+          --fingerprint "$CUBRID_3RDPARTY_FINGERPRINT"
 
 FROM build-environment AS final
 
 ARG CUBRID_3RDPARTY_REVISION=
+ARG CUBRID_3RDPARTY_FINGERPRINT=
+ARG CUBRID_3RDPARTY_COMPATIBILITY_BUILD=0
 
 COPY --from=thirdparty-prefix-builder /opt/cubrid-thirdparty/ /opt/cubrid-thirdparty/
+COPY validate-thirdparty-prefix.py /usr/local/bin/validate-cubrid-thirdparty-prefix
 
-# An empty value keeps the current image behavior. For an enabled POC image the
-# entrypoint validates the baked prefix, then exports CUBRID_3RDPARTY_MODE and
-# CUBRID_3RDPARTY_ROOT for the matching CUBRID CMake implementation.
+# The entrypoint validates the baked prefix against immutable image metadata,
+# then exports the matching CUBRID CMake consumer interface. Empty values are
+# allowed only for an explicitly requested compatibility image.
 ENV CUBRID_CI_3RDPARTY_REVISION=$CUBRID_3RDPARTY_REVISION
+ENV CUBRID_CI_3RDPARTY_FINGERPRINT=$CUBRID_3RDPARTY_FINGERPRINT
+ENV CUBRID_CI_3RDPARTY_COMPATIBILITY_BUILD=$CUBRID_3RDPARTY_COMPATIBILITY_BUILD
 
 COPY docker-entrypoint.sh /entrypoint.sh
 
-RUN chmod 775 /entrypoint.sh
+RUN chmod 775 /entrypoint.sh /usr/local/bin/validate-cubrid-thirdparty-prefix
 WORKDIR $WORKDIR
 
 ENTRYPOINT ["/entrypoint.sh"]

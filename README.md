@@ -57,36 +57,83 @@ arguments pass straight through to `build.sh`; run `./build.sh -h` for the list.
 The exit code is 0 on success and non-zero on failure. On a build failure the last 500 lines of
 `build.log` are printed.
 
-### Prototype: bake a third-party prefix into the image
+### Prebuilt CUBRID third-party prefix
 
-> **POC only.** This shows the cubridci half of the interface proposed by CUBRIDQA-1613. The normal Jenkins build leaves
-> it disabled until the matching CUBRID source changes exist.
+The normal Jenkins build bakes the qualified CUBRID third-party prefix into
+`build_rl8.10`. The image and CUBRID source contract are pinned together:
 
-Build an opt-in POC image with a full CUBRID commit SHA:
+| Contract input | Qualified value |
+| -------------- | --------------- |
+| CUBRID revision | `ab0cfa19e25853345eee6f4e2de1fc537f266d9a` |
+| Manifest SHA-256 | `b797d7a5b0c38d0cc67f4ccba5e14d8b3b62639f909c6f7c3b348b89509e3647` |
+| Prefix recipe | revision 3, Linux x86_64 `build_rl8.10-default` |
+
+Build the production candidate explicitly with the same inputs:
 
 ```bash
 docker build \
-  --build-arg CUBRID_3RDPARTY_REVISION=<40-character-commit-sha> \
-  -t cubridci/cubridci:build_rl8.10-ci-prebuilt-poc \
+  --build-arg CUBRID_3RDPARTY_REVISION=ab0cfa19e25853345eee6f4e2de1fc537f266d9a \
+  --build-arg CUBRID_3RDPARTY_FINGERPRINT=b797d7a5b0c38d0cc67f4ccba5e14d8b3b62639f909c6f7c3b348b89509e3647 \
+  -t cubridci/cubridci:build_rl8.10-ci-prebuilt-candidate \
   docker/ci
 ```
 
-The Docker builder stage checks out that immutable revision and expects it to provide:
+The Docker builder accepts only a full lowercase 40-character revision and a
+lowercase SHA-256 fingerprint. It fetches that immutable revision and expects
+it to provide:
 
 - a canonical `3rdparty/manifest.json`;
 - a `cubrid_thirdparty_prefix` target that writes a normalized prefix to
   `CUBRID_3RDPARTY_PREFIX_OUTPUT`; and
 - CMake support for `CUBRID_3RDPARTY_MODE=CI_PREBUILT` and `CUBRID_3RDPARTY_ROOT`.
 
-Only the generated `include/`, `lib/`, manifest, provenance and license files enter the final image at
-`/opt/cubrid-thirdparty`. Downloads, sources, objects and ExternalProject stamps remain in the discarded builder stage.
-On `build`, the entrypoint validates the baked prefix and exports the CI-prebuilt mode and root before invoking the
-unchanged `./build.sh ... clean build` command. The corresponding CUBRID CMake implementation must compare the source
-and image manifest fingerprints and fail without a source-build fallback when they differ.
+Only the generated `include/`, `lib/`, `licenses/` and
+`share/cubrid-thirdparty/` trees enter the final image at
+`/opt/cubrid-thirdparty`. Downloads, source/build trees, objects,
+ExternalProject stamps and producer tooling remain in the discarded builder
+stage.
 
-An empty `CUBRID_3RDPARTY_REVISION`, including the existing Jenkins invocation, preserves the current image and build
-behavior. A configured image with missing prefix metadata fails before `build.sh` starts. Release and OptDebug are
-expected to share the same prefix; existing linkage remains unchanged, including unixODBC's shared linkage.
+The builder and entrypoint share one validator. It computes the canonical
+manifest fingerprint, checks the producer revision and clean-source marker,
+derives required headers, libraries and licenses from the manifest, verifies
+every provenance digest and symlink, and rejects build-state or an unexpected
+inventory. On `build`, this validation completes before the entrypoint exports
+the following values and invokes the unchanged `./build.sh ... clean build`
+path:
+
+```text
+CUBRID_3RDPARTY_MODE=CI_PREBUILT
+CUBRID_3RDPARTY_ROOT=/opt/cubrid-thirdparty
+```
+
+Missing or corrupt metadata, a wrong producer revision, a mismatched
+fingerprint, or conflicting user-supplied mode/root fails before `build.sh`
+without an ExternalProject fallback. Release and OptDebug consume the same
+prefix. Ticket-05 qualification at the pinned revision proved matching ELF
+types and `DT_NEEDED` sets for the seven required CUBRID artifacts; the six
+static dependency families remain static and `cub_cas_cgw` retains
+`libodbc.so.2` from the prefix.
+
+An image without a prefix is available only as an explicit compatibility
+build. Both identity inputs must be empty:
+
+```bash
+docker build \
+  --build-arg CUBRID_3RDPARTY_COMPATIBILITY_BUILD=1 \
+  --build-arg CUBRID_3RDPARTY_REVISION= \
+  --build-arg CUBRID_3RDPARTY_FINGERPRINT= \
+  -t cubridci/cubridci:build_rl8.10-external-compat \
+  docker/ci
+```
+
+That image leaves mode unset (or permits explicit `EXTERNAL`) and retains the
+legacy source-build behavior. It is not the normal Jenkins path.
+
+When the CUBRID manifest changes, qualify Release and OptDebug against one new
+prefix first, then update the revision and fingerprint together in the
+Jenkinsfile and this section. Keep the pull request draft until the production
+tag, rollout order and deployment owner are decided; those are deliberately
+outside this integration change.
 
 This design is independent of ccache and does not use an archive, zstd, shared volume, restore or publication step for
 third-party reuse. A dependency update is paid once while building the image; ordinary CI pods consume the expanded
