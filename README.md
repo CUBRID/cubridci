@@ -59,7 +59,7 @@ The exit code is 0 on success and non-zero on failure. On a build failure the la
 
 ### Prototype: reuse the third-party build tree
 
-> **POC only.** This demonstrates the expected entrypoint change for follow-up work under a valid CUBRIDQA ticket. It
+> **POC only.** This demonstrates the expected entrypoint change for follow-up work under CUBRIDQA-1613. It
 > has not been qualified against the production Kubernetes storage and is not proposed as finished production code.
 
 Set `CUBRID_3RDPARTY_ARCHIVE_DIR` to an existing shared directory to preserve the complete
@@ -80,9 +80,9 @@ docker run --rm \
 
 The POC runs `build.sh clean`, restores `build/3rdparty` into the pod-local build tree on a verified hit, and then runs
 `build.sh build`. On a trusted miss it writes `manifest.txt`, `thirdparty.tar.zst`, its SHA-256, and a completion marker
-to a private staging directory before renaming that directory to its final key. CUBRID already builds these bundled
-dependencies as static libraries; the archive preserves those outputs and their ExternalProject state without changing
-the final CUBRID build artifacts or link mode.
+to a private staging directory before renaming that directory to its final key. CUBRID already builds most bundled
+dependencies as static libraries; unixODBC remains the existing shared-library exception. The archive preserves those
+outputs and their ExternalProject state without changing the final CUBRID build artifacts or link mode.
 
 The image installs `zstd` because a completed third-party tree is hundreds of MiB and warm restoration happens more
 often than publication. Fast zstd decompression reduces both elapsed time and shared-storage traffic; level 3 keeps the
