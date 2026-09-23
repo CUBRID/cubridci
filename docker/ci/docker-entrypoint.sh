@@ -121,6 +121,50 @@ function check_history ()
   return 1
 }
 
+function enable_ci_prebuilt_thirdparty ()
+{
+  local revision=${CUBRID_CI_3RDPARTY_REVISION:-}
+  local root=/opt/cubrid-thirdparty
+
+  if [ -z "$revision" ]; then
+    if [ -s "$root/share/cubrid-thirdparty/manifest.json" ]; then
+      echo "[ci-prebuilt-3rdparty] error: the image has a prefix but no producer revision" >&2
+      return 1
+    fi
+    if [ -n "${CUBRID_3RDPARTY_MODE+x}" ] && [ "$CUBRID_3RDPARTY_MODE" != EXTERNAL ]; then
+      echo "[ci-prebuilt-3rdparty] error: this image has no baked prefix; mode must be unset or EXTERNAL" >&2
+      return 1
+    fi
+    if [ -n "${CUBRID_3RDPARTY_ROOT+x}" ]; then
+      echo "[ci-prebuilt-3rdparty] error: the root is set, but this image has no baked prefix" >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  if [ -n "${CUBRID_3RDPARTY_MODE+x}" ] && [ "$CUBRID_3RDPARTY_MODE" != CI_PREBUILT ]; then
+    echo "[ci-prebuilt-3rdparty] error: mode must be CI_PREBUILT for this image" >&2
+    return 1
+  fi
+  if [ -n "${CUBRID_3RDPARTY_ROOT+x}" ] && [ "$CUBRID_3RDPARTY_ROOT" != "$root" ]; then
+    echo "[ci-prebuilt-3rdparty] error: root must be $root for this image" >&2
+    return 1
+  fi
+
+  [ -d "$root/include" ] \
+    || { echo "[ci-prebuilt-3rdparty] error: missing $root/include" >&2; return 1; }
+  [ -d "$root/lib" ] \
+    || { echo "[ci-prebuilt-3rdparty] error: missing $root/lib" >&2; return 1; }
+  [ -s "$root/share/cubrid-thirdparty/manifest.json" ] \
+    || { echo "[ci-prebuilt-3rdparty] error: missing manifest.json under $root" >&2; return 1; }
+  [ -s "$root/share/cubrid-thirdparty/provenance.json" ] \
+    || { echo "[ci-prebuilt-3rdparty] error: missing provenance.json under $root" >&2; return 1; }
+
+  export CUBRID_3RDPARTY_MODE=CI_PREBUILT
+  export CUBRID_3RDPARTY_ROOT=$root
+  echo "[ci-prebuilt-3rdparty] mode=$CUBRID_3RDPARTY_MODE root=$root producer=$revision"
+}
+
 function run_build ()
 {
   if [ -f ./build.sh ]; then
@@ -133,10 +177,12 @@ function run_build ()
     return 1
   fi
 
+  enable_ci_prebuilt_thirdparty || return 1
   check_history $CUBRID_SRCDIR || return 1
 
   if ! (cd $CUBRID_SRCDIR \
-    && ./build.sh -p $CUBRID $@ clean build) 2>&1 | tee build.log | { grep -e '\[[ 0-9]\+%\]' -e ' error: ' -e '\[[0-9]\+\/[0-9]\+\]' || true; }
+    && ./build.sh -p $CUBRID $@ clean build) 2>&1 | tee build.log \
+      | { grep -e '^\[ci-prebuilt-3rdparty\]' -e '\[[ 0-9]\+%\]' -e ' error: ' -e '\[[0-9]\+\/[0-9]\+\]' || true; }
   then
     tail -500 build.log
     return 1

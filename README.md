@@ -57,6 +57,41 @@ arguments pass straight through to `build.sh`; run `./build.sh -h` for the list.
 The exit code is 0 on success and non-zero on failure. On a build failure the last 500 lines of
 `build.log` are printed.
 
+### Prototype: bake a third-party prefix into the image
+
+> **POC only.** This shows the cubridci half of the interface proposed by CUBRIDQA-1613. The normal Jenkins build leaves
+> it disabled until the matching CUBRID source changes exist.
+
+Build an opt-in POC image with a full CUBRID commit SHA:
+
+```bash
+docker build \
+  --build-arg CUBRID_3RDPARTY_REVISION=<40-character-commit-sha> \
+  -t cubridci/cubridci:build_rl8.10-ci-prebuilt-poc \
+  docker/ci
+```
+
+The Docker builder stage checks out that immutable revision and expects it to provide:
+
+- a canonical `3rdparty/manifest.json`;
+- a `cubrid_thirdparty_prefix` target that writes a normalized prefix to
+  `CUBRID_3RDPARTY_PREFIX_OUTPUT`; and
+- CMake support for `CUBRID_3RDPARTY_MODE=CI_PREBUILT` and `CUBRID_3RDPARTY_ROOT`.
+
+Only the generated `include/`, `lib/`, manifest, provenance and license files enter the final image at
+`/opt/cubrid-thirdparty`. Downloads, sources, objects and ExternalProject stamps remain in the discarded builder stage.
+On `build`, the entrypoint validates the baked prefix and exports the CI-prebuilt mode and root before invoking the
+unchanged `./build.sh ... clean build` command. The corresponding CUBRID CMake implementation must compare the source
+and image manifest fingerprints and fail without a source-build fallback when they differ.
+
+An empty `CUBRID_3RDPARTY_REVISION`, including the existing Jenkins invocation, preserves the current image and build
+behavior. A configured image with missing prefix metadata fails before `build.sh` starts. Release and OptDebug are
+expected to share the same prefix; existing linkage remains unchanged, including unixODBC's shared linkage.
+
+This design is independent of ccache and does not use an archive, zstd, shared volume, restore or publication step for
+third-party reuse. A dependency update is paid once while building the image; ordinary CI pods consume the expanded
+prefix directly.
+
 ### checkout
 
 `checkout` clones CUBRID and its three submodules into `./cubrid`, relative to the working
