@@ -57,6 +57,45 @@ arguments pass straight through to `build.sh`; run `./build.sh -h` for the list.
 The exit code is 0 on success and non-zero on failure. On a build failure the last 500 lines of
 `build.log` are printed.
 
+### Prototype: reuse the third-party build tree
+
+> **POC only.** This demonstrates the expected entrypoint change for follow-up work under a valid CUBRIDQA ticket. It
+> has not been qualified against the production Kubernetes storage and is not proposed as finished production code.
+
+Set `CUBRID_3RDPARTY_ARCHIVE_DIR` to an existing shared directory to preserve the complete
+`build_<target>_<mode>/3rdparty/` tree as a content-addressed archive. An unset variable keeps the current `clean build`
+path unchanged. A set but missing or unreadable directory is an error so a missing mount is visible immediately.
+
+Normal jobs are read-only consumers. Set exact `CUBRID_3RDPARTY_ARCHIVE_PUBLISH=true` only on a trusted seed or develop
+job to let a successful cold build publish an entry:
+
+```bash
+docker run --rm \
+  -v "$PWD/workspace:/home" \
+  -v "$PWD/thirdparty-archives:/archives" \
+  -e CUBRID_3RDPARTY_ARCHIVE_DIR=/archives \
+  -e CUBRID_3RDPARTY_ARCHIVE_PUBLISH=true \
+  cubridci/cubridci:build_rl8.10 build
+```
+
+The POC runs `build.sh clean`, restores `build/3rdparty` into the pod-local build tree on a verified hit, and then runs
+`build.sh build`. On a trusted miss it writes `manifest.txt`, `thirdparty.tar.zst`, its SHA-256, and a completion marker
+to a private staging directory before renaming that directory to its final key. CUBRID already builds these bundled
+dependencies as static libraries; the archive preserves those outputs and their ExternalProject state without changing
+the final CUBRID build artifacts or link mode.
+
+The image installs `zstd` because a completed third-party tree is hundreds of MiB and warm restoration happens more
+often than publication. Fast zstd decompression reduces both elapsed time and shared-storage traffic; level 3 keeps the
+less frequent publication path inexpensive.
+
+The content key covers the third-party CMake input, runtime toolchain packages, relevant build arguments and flags, and
+absolute source/build paths. It deliberately does not include the CUBRID commit, so ordinary engine changes can reuse
+the same dependency archive.
+
+Follow-up work must validate atomic rename on the real shared filesystem, define trusted publisher injection and
+retention, harden archive extraction and corrupt-entry repair, add automated entrypoint coverage, and qualify real cold
+and warm release/optdebug builds. The POC never deletes completed shared entries.
+
 ### checkout
 
 `checkout` clones CUBRID and its three submodules into `./cubrid`, relative to the working
