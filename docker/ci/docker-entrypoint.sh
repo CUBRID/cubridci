@@ -115,10 +115,70 @@ function check_history ()
   # git names the real cause; a fixed hint can only guess at one of the two.
   err=$(git -C "$dir" rev-list --count HEAD 2>&1 > /dev/null) && return 0
   echo "** ERROR: cannot walk the history of $dir; the build number would be empty." >&2
-  echo "$err" | sed 's/^/   git: /' >&2
+  printf '%s\n' "$err" | sed 's/^/   git: /' >&2
   echo "   A tree checked out with BUILD_MIRROR needs that mirror mounted here too." >&2
   echo "   A bind-mounted tree owned by another user needs safe.directory." >&2
   return 1
+}
+
+function enable_ci_prebuilt_thirdparty ()
+{
+  local revision=${CUBRID_CI_3RDPARTY_REVISION:-}
+  local fingerprint=${CUBRID_CI_3RDPARTY_FINGERPRINT:-}
+  local compatibility=${CUBRID_CI_3RDPARTY_COMPATIBILITY_BUILD:-0}
+  local root=/opt/cubrid-thirdparty
+
+  if [ "$compatibility" = 1 ]; then
+    if [ -n "$revision" ] || [ -n "$fingerprint" ]; then
+      echo "[ci-prebuilt-3rdparty] error: compatibility image must not declare prefix identity" >&2
+      return 1
+    fi
+    if [ -s "$root/share/cubrid-thirdparty/manifest.json" ]; then
+      echo "[ci-prebuilt-3rdparty] error: compatibility image unexpectedly contains a prefix" >&2
+      return 1
+    fi
+    if [ -n "${CUBRID_3RDPARTY_MODE+x}" ] && [ "$CUBRID_3RDPARTY_MODE" != EXTERNAL ]; then
+      echo "[ci-prebuilt-3rdparty] error: this image has no baked prefix; mode must be unset or EXTERNAL" >&2
+      return 1
+    fi
+    if [ -n "${CUBRID_3RDPARTY_ROOT+x}" ]; then
+      echo "[ci-prebuilt-3rdparty] error: the root is set, but this image has no baked prefix" >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  if [ "$compatibility" != 0 ]; then
+    echo "[ci-prebuilt-3rdparty] error: invalid compatibility-build marker: $compatibility" >&2
+    return 1
+  fi
+  if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "[ci-prebuilt-3rdparty] error: invalid image producer revision" >&2
+    return 1
+  fi
+  if [[ ! "$fingerprint" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[ci-prebuilt-3rdparty] error: invalid image manifest fingerprint" >&2
+    return 1
+  fi
+
+  if [ -n "${CUBRID_3RDPARTY_MODE+x}" ] && [ "$CUBRID_3RDPARTY_MODE" != CI_PREBUILT ]; then
+    echo "[ci-prebuilt-3rdparty] error: mode must be CI_PREBUILT for this image" >&2
+    return 1
+  fi
+  if [ -n "${CUBRID_3RDPARTY_ROOT+x}" ] && [ "$CUBRID_3RDPARTY_ROOT" != "$root" ]; then
+    echo "[ci-prebuilt-3rdparty] error: root must be $root for this image" >&2
+    return 1
+  fi
+
+  /usr/local/bin/validate-cubrid-thirdparty-prefix \
+    --root "$root" \
+    --revision "$revision" \
+    --fingerprint "$fingerprint" \
+    || return 1
+
+  export CUBRID_3RDPARTY_MODE=CI_PREBUILT
+  export CUBRID_3RDPARTY_ROOT=$root
+  echo "[ci-prebuilt-3rdparty] mode=$CUBRID_3RDPARTY_MODE root=$root producer=$revision fingerprint=$fingerprint"
 }
 
 function run_build ()
@@ -133,10 +193,12 @@ function run_build ()
     return 1
   fi
 
+  enable_ci_prebuilt_thirdparty || return 1
   check_history $CUBRID_SRCDIR || return 1
 
   if ! (cd $CUBRID_SRCDIR \
-    && ./build.sh -p $CUBRID $@ clean build) 2>&1 | tee build.log | { grep -e '\[[ 0-9]\+%\]' -e ' error: ' -e '\[[0-9]\+\/[0-9]\+\]' || true; }
+    && ./build.sh -p "$CUBRID" "$@" clean build) 2>&1 | tee build.log \
+      | { grep -e '^\[ci-prebuilt-3rdparty\]' -e '\[[ 0-9]\+%\]' -e ' error: ' -e '\[[0-9]\+\/[0-9]\+\]' || true; }
   then
     tail -500 build.log
     return 1
@@ -158,7 +220,7 @@ function run_dist ()
   check_history $CUBRID_SRCDIR || return 1
 
   (cd $CUBRID_SRCDIR \
-    && ./build.sh -p $CUBRID $@ dist) | tee dist.log
+    && ./build.sh -p "$CUBRID" "$@" dist) | tee dist.log
 }
 
 # Two plain tars, as in CTP's common/ext/run_coverage.sh; see the README for why `dist` cannot.
@@ -200,7 +262,8 @@ function package_gcov ()
                       "point it somewhere else" >&2; return 1 ;;
   esac
 
-  local plat=Linux.$(uname -m)
+  local plat
+  plat=Linux.$(uname -m)
   local build_tar=CUBRID-$version-gcov-$plat.tar.gz
   local src_tar=cubrid-$version-gcov-src-$plat.tar.gz
 
@@ -212,7 +275,7 @@ function package_gcov ()
   # which left 375 of them here in the first real build - and a test run must not count them.
   tar czf "$out/$src_tar" --exclude=.git --exclude='*.gcda' \
       -C "$(dirname "$src")" "$(basename "$src")" || return 1
-  tar czf "$out/$build_tar" -C "$(dirname $CUBRID)" "$(basename $CUBRID)" || return 1
+  tar czf "$out/$build_tar" -C "$(dirname "$CUBRID")" "$(basename "$CUBRID")" || return 1
 
   echo "[coverage] $version -> $out"
   local f
@@ -258,8 +321,8 @@ case "$1" in
     ;;
 esac
 
-if [ -n "$(type -t $1)" -a "$(type -t $1)" = function ]; then
-  eval "$@"
+if [ -n "$(type -t "$1")" ] && [ "$(type -t "$1")" = function ]; then
+  "$@"
 else
   exec "$@"
 fi
