@@ -8,6 +8,13 @@ Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh test [<category>]
        /entrypoint.sh node
        /entrypoint.sh coverage [<category>]
+       /entrypoint.sh cases <category> <dir>
+       /entrypoint.sh keep <root> <list>
+       /entrypoint.sh results <category> <out>
+       /entrypoint.sh count <category> <out>
+       /entrypoint.sh evidence <category> <out> <cap>
+       /entrypoint.sh failed <category> <out> <log-dir>
+       /entrypoint.sh times <out>
        /entrypoint.sh <command> [<args>...]
 
 <category> overrides $TEST_SUITE. One category per run.
@@ -38,25 +45,40 @@ process writes its .gcda only when it exits.
 
 'coverage' collects on this container alone. The controller runs it on every
 node itself, so it is only for collecting by hand.
+
+The rest serve a CI that splits a category across containers (sql, medium, shell):
+  cases     the case files under <dir>, one a line
+  keep      deletes every unit under <root> that <list> does not name
+  results   copies the result file 'count' reads and the JUnit XML into <out>
+  count     found= exec= pass= fail= skip= of the results in <out>
+  evidence  archives the CTP logs and ERROR_BACKUP into <out>/artifacts, files over <cap> left out
+  failed    the failed cases in <out>, one a line; the n-th one's log goes to <log-dir>/<n>.log
+  times     <case path> <seconds> for every case feedback.log in <out> timed
 EOF
 }
 
 # Every category attribute lives here; other functions only read these variables.
 function resolve_category ()
 {
+  # Only some categories set these, and a caller's environment must not fill them in for the rest.
+  CASE_GLOB= CASE_FILTER=
   case "$TEST_SUITE" in
     sql)
       TC_REPO=cubrid-testcases            CTP_CMD=sql
       CONF_SRC=conf/sql.conf              CTP_CONF=conf/sql_runtime.conf
-      CONF_WRITER=copy_conf               REPORT_STYLE=sqlresult ;;
+      CONF_WRITER=copy_conf               REPORT_STYLE=sqlresult
+      CASE_GLOB='*/cases/*.sql'           CASE_FILTER= ;;
     medium)
       TC_REPO=cubrid-testcases            CTP_CMD=medium
       CONF_SRC=conf/medium_dev.conf       CTP_CONF=conf/medium_runtime.conf
-      CONF_WRITER=copy_conf               REPORT_STYLE=sqlresult ;;
+      CONF_WRITER=copy_conf               REPORT_STYLE=sqlresult
+      CASE_GLOB='*/cases/*.sql'           CASE_FILTER= ;;
     shell)
       TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
       CONF_SRC=conf/shell_ci.conf         CTP_CONF=conf/shell_runtime.conf
-      CONF_WRITER=copy_conf               REPORT_STYLE=status ;;
+      CONF_WRITER=copy_conf               REPORT_STYLE=status
+      # A shell case is <name>/cases/<name>.sh; anything else under cases/ is its helper.
+      CASE_GLOB='*/cases/*.sh'            CASE_FILTER='/([^/]+)/cases/\1\.sh$' ;;
     shell_heavy)
       TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
       CTP_CONF=conf/shell_heavy_ci.conf   REPORT_STYLE=status
@@ -193,7 +215,7 @@ function checkout_repo ()
     was_head=$(git -c safe.directory="$dir" -C "$dir" rev-parse --verify HEAD 2>/dev/null) || was_head=unknown
     was_branch=$(git -c safe.directory="$dir" -C "$dir" symbolic-ref --short HEAD 2>/dev/null) || was_branch=unknown
     echo "[checkout] $repo is already here at $was_branch -> $was_head; moving it to $branch tip"
-    [ "$was_branch" = "$branch" ] \
+    [ "$was_branch" = "$branch" ] || [[ $branch =~ ^[0-9a-f]{40}$ ]] \
       || echo "[warn] $repo was checked out from $was_branch, not $branch" >&2
   fi
 
@@ -222,6 +244,8 @@ function checkout_repo ()
   local head
   head=$(git -C "$dir" rev-parse --verify HEAD 2>/dev/null) \
     || { echo "** ERROR: $repo has no valid HEAD after checkout ($branch)" >&2; exit 1; }
+  [[ ! $branch =~ ^[0-9a-f]{40}$ ]] || [ "$head" = "$branch" ] \
+    || { echo "** ERROR: $repo is at $head after checkout, not the commit asked for ($branch)" >&2; exit 1; }
   echo "[checkout] $repo @ $branch -> $head $(git -C "$dir" log -1 --pretty=format:'%s' 2>/dev/null)"
 }
 
@@ -779,20 +803,22 @@ function collect_coverage ()
   done
 }
 
-# $RUN_STAMP keeps reporting and judging off results left by earlier runs.
+# $RUN_STAMP keeps reporting and judging off results left by earlier runs. 'results' has none: it
+# reads the one run its container held, and may run after 'test' was killed before getting here.
 function collect_xml ()
 {
-  mkdir -p "$TEST_REPORT"
+  local dest=${1:-$TEST_REPORT}
+  mkdir -p "$dest"
 
   local n=0 x
   while IFS= read -r x; do
-    cp -f "$x" "$TEST_REPORT/" && n=$((n + 1))
-  done < <(find -L "$XML_SRC" -type f -name '*.xml' ! -name 'summary.xml' -newer "$RUN_STAMP" 2>/dev/null)
+    cp -f "$x" "$dest/" && n=$((n + 1))
+  done < <(find -L "$XML_SRC" -type f -name '*.xml' ! -name 'summary.xml' ${RUN_STAMP:+-newer "$RUN_STAMP"} 2>/dev/null)
 
   if [ "$n" -eq 0 ]; then
     echo "[warn] no JUnit XML found under $XML_SRC" >&2
   else
-    echo "[report] collected $n JUnit XML file(s) into $TEST_REPORT"
+    echo "[report] collected $n JUnit XML file(s) into $dest"
   fi
 }
 
@@ -1008,6 +1034,185 @@ function run_test ()
   if "judge_${REPORT_STYLE}"; then exit 0; else exit 1; fi
 }
 
+# The file 'count' reads, by report style. cciresult has no per-case lines to count.
+function result_file ()
+{
+  case "$REPORT_STYLE" in
+    status)    echo test_status.data ;;
+    sqlresult) echo summary_info ;;
+    *) echo "** ERROR: '$TEST_SUITE' has no result file to count" >&2; exit 1 ;;
+  esac
+}
+
+function list_cases ()
+{
+  local dir=${1:?usage: cases <category> <dir>}
+  [ -n "$CASE_GLOB" ] || { echo "** ERROR: '$TEST_SUITE' has no case rule" >&2; exit 1; }
+  find "$dir" -path "$CASE_GLOB" 2>/dev/null \
+    | { if [ -z "$CASE_FILTER" ]; then cat; else grep -P "$CASE_FILTER" || :; fi; }
+}
+
+# A list of directories keeps those top-level units whole; a list of case files keeps the cases/
+# directories holding them. Entries are relative to $WORKDIR, the way a split names them.
+function keep_cases ()
+{
+  local root=${1:?usage: keep <root> <list>} list=${2:?usage: keep <root> <list>}
+  # A root spelled unlike the entries would match none of them and delete every unit.
+  case "$root" in
+    "$WORKDIR"/*) ;;
+    *) echo "** ERROR: <root> must be an absolute path under $WORKDIR, not $root" >&2; exit 1 ;;
+  esac
+  [ -d "$root" ] || { echo "** ERROR: no directory $root" >&2; exit 1; }
+  [ -s "$list" ] || { echo "** ERROR: $list is missing or empty" >&2; exit 1; }
+  local rel=${root#"$WORKDIR"/}
+  awk -v p="$rel/" 'index($0, p) != 1 {exit 1}' "$list" \
+    || { echo "** ERROR: $list names a unit outside $root" >&2; exit 1; }
+
+  if [ -d "$WORKDIR/$(head -1 "$list")" ]; then
+    awk -v p="$rel" '{sub(/\/[^\/]*$/, ""); if ($0 != p) exit 1}' "$list" \
+      || { echo "** ERROR: $list names directories not directly under $root" >&2; exit 1; }
+    find "$root" -mindepth 1 -maxdepth 1 -type d -name '_*' \
+      | { grep -vxF -f <(sed "s#^#$WORKDIR/#" "$list") || :; } | xargs -r rm -rf
+  else
+    # -prune: a case can carry a cases/ of its own, which goes with the outer one.
+    find "$root" -name cases -type d -prune \
+      | { grep -vxF -f <(sed "s#^#$WORKDIR/#" "$list" | xargs -n1 dirname | sort -u) || :; } \
+      | xargs -r rm -rf
+  fi
+}
+
+function copy_results ()
+{
+  local out=${1:?usage: results <category> <out>} f
+  f=$(result_file)
+  mkdir -p "$out/artifacts"
+  [ -d "$XML_SRC" ] || return 0
+  collect_xml "$out/test-results"
+  case "$REPORT_STYLE" in
+    status)
+      cp -f "$XML_SRC/$f" "$out/" 2>/dev/null || :
+      cp -f "$XML_SRC/feedback.log" "$out/artifacts/" 2>/dev/null || : ;;
+    sqlresult)
+      # One summary_info per level of the result tree, and only the leaves name cases.
+      find "$XML_SRC" -type f -name summary_info -exec cat {} + > "$out/$f.tmp" 2>/dev/null || :
+      if [ -s "$out/$f.tmp" ]; then mv -f "$out/$f.tmp" "$out/$f"; else rm -f "$out/$f.tmp"; fi ;;
+  esac
+}
+
+# exec counts a case run, skip one the conf held back; a summary_info line with no verdict is a skip.
+function count_results ()
+{
+  local out=${1:?usage: count <category> <out>} f
+  f=$(result_file)
+  if [ ! -f "$out/$f" ]; then
+    printf 'found=no\nexec=0\npass=0\nfail=0\nskip=0\n'
+    return 0
+  fi
+  case "$REPORT_STYLE" in
+    status)
+      awk -F= '/total_executed_case_count/ {e = $2 + 0}
+               /total_success_case_count/  {s = $2 + 0}
+               /total_fail_case_count/     {f = $2 + 0}
+               /total_skip_case_count/     {k = $2 + 0}
+               END {printf "found=yes\nexec=%d\npass=%d\nfail=%d\nskip=%d\n", e, s, f, k}' "$out/$f" ;;
+    sqlresult)
+      awk '/:nok[[:space:]]+[0-9]+ms$/ {f++; next}
+           /:ok[[:space:]]+[0-9]+ms$/  {s++; next}
+           /:[[:space:]]+[0-9]+ms$/    {k++}
+           END {printf "found=yes\nexec=%d\npass=%d\nfail=%d\nskip=%d\n", s + f, s, f, k}' "$out/$f" ;;
+  esac
+}
+
+# The container and its CTP tree are gone once the caller moves on, so the evidence leaves now.
+function keep_evidence ()
+{
+  local out=${1:?usage: evidence <category> <out> <cap>} cap
+  cap=$(numfmt --from=iec "${2:?usage: evidence <category> <out> <cap>}") \
+    || { echo "** ERROR: cap '$2' is not a size such as 10G" >&2; exit 1; }
+  mkdir -p "$out/artifacts"
+
+  if [ -d "$XML_SRC" ]; then
+    local real
+    real=$(readlink -f "$XML_SRC")
+    tar czf "$out/artifacts/ctp_log.tgz" -C "$(dirname "$real")" "$(basename "$real")" \
+      || echo "[warn] could not archive $XML_SRC" >&2
+  fi
+
+  # CTP packs each core with the build and the case into one archive here.
+  local f sz
+  while IFS= read -r f; do
+    mkdir -p "$out/artifacts/ERROR_BACKUP" || :
+    sz=$(stat -c %s "$f") || { echo "[warn] could not stat $f" >&2; continue; }
+    if [ "$sz" -le "$cap" ]; then
+      cp -f "$f" "$out/artifacts/ERROR_BACKUP/" || echo "[warn] could not copy $f" >&2
+    else
+      echo "[warn] $(basename "$f") is $((sz / 1048576)) MB, over the $2 cap: not copied" >&2
+      printf '%s\t%s\n' "$(basename "$f")" "$sz" >> "$out/artifacts/ERROR_BACKUP/oversized.tsv" || :
+    fi
+  done < <(find "$WORKDIR/ERROR_BACKUP" -maxdepth 1 -type f 2>/dev/null)
+}
+
+# Without idx the XML is the list itself, numbered as met; with it only the cases it names, keyed by
+# name. The body is read first, so a log carrying a literal <testcase or <failure does not restart
+# the scan. The leading space in / name=/ skips classname, which CTP writes first.
+FAILED_AWK='
+  BEGIN { while (idx != "" && (getline line < idx) > 0) { split(line, f, "\t"); want[f[1]] = f[2] } }
+  body != "" {
+    if (/\]\]><\/failure>/) { sub(/\]\]><\/failure>.*$/, ""); print > body; close(body); body = ""; next }
+    print > body
+    next
+  }
+  /<testcase/ { cur = ""; if (match($0, / name="[^"]*"/)) cur = substr($0, RSTART + 7, RLENGTH - 8) }
+  /<failure/ && cur != "" {
+    if (idx == "") { print cur; n = ++k }
+    else if (cur in want) { n = want[cur] }
+    else { cur = ""; next }
+    body = dir "/" n ".log"
+    rest = $0
+    sub(/^.*<!\[CDATA\[/, "", rest)
+    if (rest ~ /\]\]><\/failure>/) { sub(/\]\]><\/failure>.*$/, "", rest); print rest > body; close(body); body = "" }
+    else if (rest != "") print rest > body
+    cur = ""
+    next
+  }
+  /<\/testcase>/ { cur = "" }
+'
+
+function list_failed ()
+{
+  local out=${1:?usage: failed <category> <out> <log-dir>} logs=${2:?usage: failed <category> <out> <log-dir>}
+  local f
+  f=$(result_file)
+  # A log left from another call would be read as this one's n-th.
+  [ -z "$(ls -A "$logs" 2>/dev/null)" ] || { echo "** ERROR: $logs is not empty" >&2; exit 1; }
+  mkdir -p "$logs"
+  case "$REPORT_STYLE" in
+    status)
+      find "$out" -type f -name test-shell.xml -exec awk -v dir="$logs" -v idx= "$FAILED_AWK" {} + ;;
+    sqlresult)
+      [ -f "$out/$f" ] || return 0
+      # The same lines judge_sqlresult reads, cut back to the repo-relative name the XML carries.
+      { grep -E ':nok[[:space:]]+[0-9]+ms$' "$out/$f" || :; } \
+        | sed -e 's/:nok[[:space:]].*$//' -e "s#^$WORKDIR/$TC_REPO/##" > "$logs/failed.list"
+      awk '{printf "%s\t%d\n", $0, NR}' "$logs/failed.list" > "$logs/failed.idx"
+      find "$out" -type f -name '*.xml' ! -name summary.xml \
+        -exec awk -v dir="$logs" -v idx="$logs/failed.idx" "$FAILED_AWK" {} +
+      cat "$logs/failed.list"
+      rm -f "$logs/failed.list" "$logs/failed.idx" ;;
+  esac
+}
+
+# feedback.log lines: [OK]:  <case path> <milliseconds> EnvId=... Only the shell runner writes one.
+function case_times ()
+{
+  local log=${1:?usage: times <out>}/artifacts/feedback.log
+  [ -f "$log" ] || return 0
+  { grep -E '^\[(OK|NOK)\]' "$log" || :; } | awk '
+    { ms = ""; path = ""
+      for (i = NF; i > 1; i--) if ($i ~ /^EnvId=/) { ms = $(i-1); path = $(i-2); break }
+      if (ms ~ /^[0-9]+$/ && path != "") printf "%s\t%.3f\n", path, ms / 1000 }'
+}
+
 # The Dockerfile ENV of this name is flattened at build time and cannot follow BRANCH_TESTTOOLS.
 export CTP_BRANCH_NAME=$BRANCH_TESTTOOLS
 
@@ -1041,6 +1246,24 @@ case "$1" in
     fi
     # Reaping zombies is PID 1's job; a shell in wait does it, 'sleep' alone does not.
     while :; do sleep 3600 & wait $!; done
+    ;;
+  cases|results|count|evidence|failed)
+    verb=$1; shift
+    TEST_SUITE=${1:-}; shift || :
+    resolve_category
+    case "$verb" in
+      cases)    list_cases "$@" ;;
+      results)  copy_results "$@" ;;
+      count)    count_results "$@" ;;
+      evidence) keep_evidence "$@" ;;
+      failed)   list_failed "$@" ;;
+    esac
+    ;;
+  keep)
+    shift; keep_cases "$@"
+    ;;
+  times)
+    shift; case_times "$@"
     ;;
   "")
     usage; exit 1
