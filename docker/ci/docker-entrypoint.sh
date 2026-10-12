@@ -1127,8 +1127,10 @@ function count_results ()
 function keep_evidence ()
 {
   local out=${1:?usage: evidence <category> <out> <cap>} cap
-  cap=$(numfmt --from=iec "${2:?usage: evidence <category> <out> <cap>}") \
-    || { echo "** ERROR: cap '$2' is not a size such as 10G" >&2; exit 1; }
+  [[ ${2:-} =~ ^([0-9]+)([MG]?)$ ]] \
+    || { echo "** ERROR: cap '${2:-}' is not a size such as 10G or 500M" >&2; exit 1; }
+  cap=${BASH_REMATCH[1]}
+  case "${BASH_REMATCH[2]}" in G) cap=$((cap << 30)) ;; M) cap=$((cap << 20)) ;; esac
   mkdir -p "$out/artifacts"
 
   if [ -d "$XML_SRC" ]; then
