@@ -419,7 +419,7 @@ nothing of the CI or of the other containers. The category is an argument here, 
 | Verb | Arguments | What it does |
 | ---- | --------- | ------------ |
 | `cases` | `<category> <dir>` | Prints every case file under `<dir>`, one a line. A shell case is `<name>/cases/<name>.sh`. |
-| `keep` | `<root> <list>` | Deletes every unit under `<root>` that `<list>` does not name. Entries are relative to `/home`: top-level directories keep those whole, case files keep the `cases/` directory holding them. |
+| `keep` | `<unit> <root> <list>` | Deletes every unit under `<root>` that `<list>` does not name. Entries are relative to `/home`. With `dir` they are top-level directories, kept whole; with `case` they are case files, and the `cases/` directory holding each is kept. |
 | `results` | `<category> <out>` | Copies the result file into `<out>` (`summary_info`, merged from the whole result tree, or `test_status.data`) and the JUnit XML into `<out>/test-results`; for `shell`, `feedback.log` into `<out>/artifacts` as well. Works after a `test` that was killed part way. |
 | `count` | `<category> <out>` | Prints `found=`, `exec=`, `pass=`, `fail=` and `skip=` for the result file in `<out>`, one a line, ready for `eval`. `found=no` when the file is missing. |
 | `evidence` | `<category> <out> <cap>` | Archives the CTP log tree into `<out>/artifacts/ctp_log.tgz` and copies `ERROR_BACKUP` into `<out>/artifacts/ERROR_BACKUP`. A file larger than `<cap>` (`10G`, `500M`) is listed in `oversized.tsv` instead. |

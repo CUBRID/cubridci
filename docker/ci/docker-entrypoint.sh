@@ -9,7 +9,7 @@ Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh node
        /entrypoint.sh coverage [<category>]
        /entrypoint.sh cases <category> <dir>
-       /entrypoint.sh keep <root> <list>
+       /entrypoint.sh keep <unit> <root> <list>
        /entrypoint.sh results <category> <out>
        /entrypoint.sh count <category> <out>
        /entrypoint.sh evidence <category> <out> <cap>
@@ -48,7 +48,7 @@ node itself, so it is only for collecting by hand.
 
 The rest serve a CI that splits a category across containers (sql, medium, shell):
   cases     the case files under <dir>, one a line
-  keep      deletes every unit under <root> that <list> does not name
+  keep      deletes every <unit> (dir or case) under <root> that <list> does not name
   results   copies the result file 'count' reads and the JUnit XML into <out>
   count     found= exec= pass= fail= skip= of the results in <out>
   evidence  archives the CTP logs and ERROR_BACKUP into <out>/artifacts, files over <cap> left out
@@ -1046,17 +1046,17 @@ function result_file ()
 
 function list_cases ()
 {
-  local dir=${1:?usage: cases <category> <dir>}
+  local dir=$1
   [ -n "$CASE_GLOB" ] || { echo "** ERROR: '$TEST_SUITE' has no case rule" >&2; exit 1; }
-  find "$dir" -path "$CASE_GLOB" 2>/dev/null \
+  [ -d "$dir" ] || { echo "** ERROR: no directory $dir" >&2; exit 1; }
+  find "$dir" -path "$CASE_GLOB" \
     | { if [ -z "$CASE_FILTER" ]; then cat; else grep -P "$CASE_FILTER" || :; fi; }
 }
 
-# A list of directories keeps those top-level units whole; a list of case files keeps the cases/
-# directories holding them. Entries are relative to $WORKDIR, the way a split names them.
+# Entries are relative to $WORKDIR, the way a split names them.
 function keep_cases ()
 {
-  local root=${1:?usage: keep <root> <list>} list=${2:?usage: keep <root> <list>}
+  local unit=$1 root=$2 list=$3
   # A root spelled unlike the entries would match none of them and delete every unit.
   case "$root" in
     "$WORKDIR"/*) ;;
@@ -1068,22 +1068,27 @@ function keep_cases ()
   awk -v p="$rel/" 'index($0, p) != 1 {exit 1}' "$list" \
     || { echo "** ERROR: $list names a unit outside $root" >&2; exit 1; }
 
-  if [ -d "$WORKDIR/$(head -1 "$list")" ]; then
-    awk -v p="$rel" '{sub(/\/[^\/]*$/, ""); if ($0 != p) exit 1}' "$list" \
-      || { echo "** ERROR: $list names directories not directly under $root" >&2; exit 1; }
-    find "$root" -mindepth 1 -maxdepth 1 -type d -name '_*' \
-      | { grep -vxF -f <(sed "s#^#$WORKDIR/#" "$list") || :; } | xargs -r rm -rf
-  else
-    # -prune: a case can carry a cases/ of its own, which goes with the outer one.
-    find "$root" -name cases -type d -prune \
-      | { grep -vxF -f <(sed "s#^#$WORKDIR/#" "$list" | xargs -n1 dirname | sort -u) || :; } \
-      | xargs -r rm -rf
-  fi
+  case "$unit" in
+    dir)
+      awk -v p="$rel" '{sub(/\/[^\/]*$/, ""); if ($0 != p) exit 1}' "$list" \
+        || { echo "** ERROR: $list names directories not directly under $root" >&2; exit 1; }
+      find "$root" -mindepth 1 -maxdepth 1 -type d -name '_*' \
+        | { grep -vxF -f <(sed "s#^#$WORKDIR/#" "$list") || :; } | xargs -r -d '\n' rm -rf ;;
+    case)
+      # A kept case keeps its cases/ directory, so an entry anywhere else would keep nothing.
+      awk -F/ '$(NF-1) != "cases" {exit 1}' "$list" \
+        || { echo "** ERROR: $list names files outside a cases/ directory" >&2; exit 1; }
+      # -prune: a case can carry a cases/ of its own, which goes with the outer one.
+      find "$root" -name cases -type d -prune \
+        | { grep -vxF -f <(sed -e "s#^#$WORKDIR/#" -e 's#/[^/]*$##' "$list") || :; } \
+        | xargs -r -d '\n' rm -rf ;;
+    *) echo "** ERROR: <unit> must be dir or case, not '$unit'" >&2; exit 1 ;;
+  esac
 }
 
 function copy_results ()
 {
-  local out=${1:?usage: results <category> <out>} f
+  local out=$1 f
   f=$(result_file)
   mkdir -p "$out/artifacts"
   [ -d "$XML_SRC" ] || return 0
@@ -1102,7 +1107,7 @@ function copy_results ()
 # exec counts a case run, skip one the conf held back; a summary_info line with no verdict is a skip.
 function count_results ()
 {
-  local out=${1:?usage: count <category> <out>} f
+  local out=$1 f
   f=$(result_file)
   if [ ! -f "$out/$f" ]; then
     printf 'found=no\nexec=0\npass=0\nfail=0\nskip=0\n'
@@ -1126,9 +1131,9 @@ function count_results ()
 # The container and its CTP tree are gone once the caller moves on, so the evidence leaves now.
 function keep_evidence ()
 {
-  local out=${1:?usage: evidence <category> <out> <cap>} cap
-  [[ ${2:-} =~ ^([0-9]+)([MG]?)$ ]] \
-    || { echo "** ERROR: cap '${2:-}' is not a size such as 10G or 500M" >&2; exit 1; }
+  local out=$1 cap
+  [[ $2 =~ ^([0-9]+)([MG]?)$ ]] \
+    || { echo "** ERROR: cap '$2' is not a size such as 10G or 500M" >&2; exit 1; }
   cap=${BASH_REMATCH[1]}
   case "${BASH_REMATCH[2]}" in G) cap=$((cap << 30)) ;; M) cap=$((cap << 20)) ;; esac
   mkdir -p "$out/artifacts"
@@ -1182,7 +1187,7 @@ FAILED_AWK='
 
 function list_failed ()
 {
-  local out=${1:?usage: failed <category> <out> <log-dir>} logs=${2:?usage: failed <category> <out> <log-dir>}
+  local out=$1 logs=$2
   local f
   f=$(result_file)
   # A log left from another call would be read as this one's n-th.
@@ -1207,12 +1212,21 @@ function list_failed ()
 # feedback.log lines: [OK]:  <case path> <milliseconds> EnvId=... Only the shell runner writes one.
 function case_times ()
 {
-  local log=${1:?usage: times <out>}/artifacts/feedback.log
+  local log=$1/artifacts/feedback.log
   [ -f "$log" ] || return 0
   { grep -E '^\[(OK|NOK)\]' "$log" || :; } | awk '
     { ms = ""; path = ""
       for (i = NF; i > 1; i--) if ($i ~ /^EnvId=/) { ms = $(i-1); path = $(i-2); break }
       if (ms ~ /^[0-9]+$/ && path != "") printf "%s\t%.3f\n", path, ms / 1000 }'
+}
+
+# An empty <out> or <dir> would put every path built on it under /.
+function check_args ()
+{
+  local verb=$1 n use a; shift
+  read -r n use < <(usage 2>&1 | awk -v v="$verb" '$2 == v {n = NF - 2; $1 = $1; print n, $0}')
+  for a; do [ -n "$a" ] || break; done
+  [ "$#" = "$n" ] && [ -n "$a" ] || { echo "** ERROR: usage: $use (none of them empty)" >&2; exit 1; }
 }
 
 # The Dockerfile ENV of this name is flattened at build time and cannot follow BRANCH_TESTTOOLS.
@@ -1250,8 +1264,8 @@ case "$1" in
     while :; do sleep 3600 & wait $!; done
     ;;
   cases|results|count|evidence|failed)
-    verb=$1; shift
-    TEST_SUITE=${1:-}; shift || :
+    verb=$1; shift; check_args "$verb" "$@"
+    TEST_SUITE=$1; shift
     resolve_category
     case "$verb" in
       cases)    list_cases "$@" ;;
@@ -1262,10 +1276,10 @@ case "$1" in
     esac
     ;;
   keep)
-    shift; keep_cases "$@"
+    shift; check_args keep "$@"; keep_cases "$@"
     ;;
   times)
-    shift; case_times "$@"
+    shift; check_args times "$@"; case_times "$@"
     ;;
   "")
     usage; exit 1
