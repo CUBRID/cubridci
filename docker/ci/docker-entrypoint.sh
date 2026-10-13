@@ -60,7 +60,6 @@ EOF
 # Every category attribute lives here; other functions only read these variables.
 function resolve_category ()
 {
-  # Only some categories set these, and a caller's environment must not fill them in for the rest.
   CASE_GLOB= CASE_FILTER=
   case "$TEST_SUITE" in
     sql)
@@ -77,7 +76,6 @@ function resolve_category ()
       TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
       CONF_SRC=conf/shell_ci.conf         CTP_CONF=conf/shell_runtime.conf
       CONF_WRITER=copy_conf               REPORT_STYLE=status
-      # A shell case is <name>/cases/<name>.sh; anything else under cases/ is its helper.
       CASE_GLOB='*/cases/*.sh'            CASE_FILTER='/([^/]+)/cases/\1\.sh$' ;;
     shell_heavy)
       TC_REPO=cubrid-testcases-private-ex CTP_CMD=shell
@@ -803,8 +801,7 @@ function collect_coverage ()
   done
 }
 
-# $RUN_STAMP keeps reporting and judging off results left by earlier runs. 'results' has none: it
-# reads the one run its container held, and may run after 'test' was killed before getting here.
+# $RUN_STAMP keeps reporting and judging off results left by earlier runs.
 function collect_xml ()
 {
   local dest=${1:-$TEST_REPORT}
@@ -1034,7 +1031,6 @@ function run_test ()
   if "judge_${REPORT_STYLE}"; then exit 0; else exit 1; fi
 }
 
-# The file 'count' reads, by report style. cciresult has no per-case lines to count.
 function result_file ()
 {
   case "$REPORT_STYLE" in
@@ -1048,16 +1044,13 @@ function list_cases ()
 {
   local dir=$1
   [ -n "$CASE_GLOB" ] || { echo "** ERROR: '$TEST_SUITE' has no case rule" >&2; exit 1; }
-  [ -d "$dir" ] || { echo "** ERROR: no directory $dir" >&2; exit 1; }
   find "$dir" -path "$CASE_GLOB" \
     | { if [ -z "$CASE_FILTER" ]; then cat; else grep -P "$CASE_FILTER" || :; fi; }
 }
 
-# Entries are relative to $WORKDIR, the way a split names them.
 function keep_cases ()
 {
   local unit=$1 root=$2 list=$3
-  # A root spelled unlike the entries would match none of them and delete every unit.
   case "$root" in
     "$WORKDIR"/*) ;;
     *) echo "** ERROR: <root> must be an absolute path under $WORKDIR, not $root" >&2; exit 1 ;;
@@ -1075,10 +1068,7 @@ function keep_cases ()
       find "$root" -mindepth 1 -maxdepth 1 -type d -name '_*' \
         | { grep -vxF -f <(sed "s#^#$WORKDIR/#" "$list") || :; } | xargs -r -d '\n' rm -rf ;;
     case)
-      # A kept case keeps its cases/ directory, so an entry anywhere else would keep nothing.
-      awk -F/ '$(NF-1) != "cases" {exit 1}' "$list" \
-        || { echo "** ERROR: $list names files outside a cases/ directory" >&2; exit 1; }
-      # -prune: a case can carry a cases/ of its own, which goes with the outer one.
+      # -prune: a kept case's own nested cases/ stays with it.
       find "$root" -name cases -type d -prune \
         | { grep -vxF -f <(sed -e "s#^#$WORKDIR/#" -e 's#/[^/]*$##' "$list") || :; } \
         | xargs -r -d '\n' rm -rf ;;
@@ -1098,13 +1088,11 @@ function copy_results ()
       cp -f "$XML_SRC/$f" "$out/" 2>/dev/null || :
       cp -f "$XML_SRC/feedback.log" "$out/artifacts/" 2>/dev/null || : ;;
     sqlresult)
-      # One summary_info per level of the result tree, and only the leaves name cases.
       find "$XML_SRC" -type f -name summary_info -exec cat {} + > "$out/$f.tmp" 2>/dev/null || :
       if [ -s "$out/$f.tmp" ]; then mv -f "$out/$f.tmp" "$out/$f"; else rm -f "$out/$f.tmp"; fi ;;
   esac
 }
 
-# exec counts a case run, skip one the conf held back; a summary_info line with no verdict is a skip.
 function count_results ()
 {
   local out=$1 f
@@ -1128,7 +1116,6 @@ function count_results ()
   esac
 }
 
-# The container and its CTP tree are gone once the caller moves on, so the evidence leaves now.
 function keep_evidence ()
 {
   local out=$1 cap
@@ -1145,7 +1132,6 @@ function keep_evidence ()
       || echo "[warn] could not archive $XML_SRC" >&2
   fi
 
-  # CTP packs each core with the build and the case into one archive here.
   local f sz
   while IFS= read -r f; do
     mkdir -p "$out/artifacts/ERROR_BACKUP" || :
@@ -1159,9 +1145,7 @@ function keep_evidence ()
   done < <(find "$WORKDIR/ERROR_BACKUP" -maxdepth 1 -type f 2>/dev/null)
 }
 
-# Without idx the XML is the list itself, numbered as met; with it only the cases it names, keyed by
-# name. The body is read first, so a log carrying a literal <testcase or <failure does not restart
-# the scan. The leading space in / name=/ skips classname, which CTP writes first.
+# A failure body is read through first: a log can hold a literal <testcase or <failure.
 FAILED_AWK='
   BEGIN { while (idx != "" && (getline line < idx) > 0) { split(line, f, "\t"); want[f[1]] = f[2] } }
   body != "" {
@@ -1190,7 +1174,6 @@ function list_failed ()
   local out=$1 logs=$2
   local f
   f=$(result_file)
-  # A log left from another call would be read as this one's n-th.
   [ -z "$(ls -A "$logs" 2>/dev/null)" ] || { echo "** ERROR: $logs is not empty" >&2; exit 1; }
   mkdir -p "$logs"
   case "$REPORT_STYLE" in
@@ -1198,7 +1181,6 @@ function list_failed ()
       find "$out" -type f -name test-shell.xml -exec awk -v dir="$logs" -v idx= "$FAILED_AWK" {} + ;;
     sqlresult)
       [ -f "$out/$f" ] || return 0
-      # The same lines judge_sqlresult reads, cut back to the repo-relative name the XML carries.
       { grep -E ':nok[[:space:]]+[0-9]+ms$' "$out/$f" || :; } \
         | sed -e 's/:nok[[:space:]].*$//' -e "s#^$WORKDIR/$TC_REPO/##" > "$logs/failed.list"
       awk '{printf "%s\t%d\n", $0, NR}' "$logs/failed.list" > "$logs/failed.idx"
@@ -1209,7 +1191,6 @@ function list_failed ()
   esac
 }
 
-# feedback.log lines: [OK]:  <case path> <milliseconds> EnvId=... Only the shell runner writes one.
 function case_times ()
 {
   local log=$1/artifacts/feedback.log
@@ -1220,13 +1201,11 @@ function case_times ()
       if (ms ~ /^[0-9]+$/ && path != "") printf "%s\t%.3f\n", path, ms / 1000 }'
 }
 
-# An empty <out> or <dir> would put every path built on it under /.
 function check_args ()
 {
-  local verb=$1 n use a; shift
+  local verb=$1 n use; shift
   read -r n use < <(usage 2>&1 | awk -v v="$verb" '$2 == v {n = NF - 2; $1 = $1; print n, $0}')
-  for a; do [ -n "$a" ] || break; done
-  [ "$#" = "$n" ] && [ -n "$a" ] || { echo "** ERROR: usage: $use (none of them empty)" >&2; exit 1; }
+  [ "$#" = "$n" ] || { echo "** ERROR: usage: $use" >&2; exit 1; }
 }
 
 # The Dockerfile ENV of this name is flattened at build time and cannot follow BRANCH_TESTTOOLS.
