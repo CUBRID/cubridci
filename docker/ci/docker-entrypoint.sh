@@ -1082,7 +1082,7 @@ function copy_results ()
   f=$(result_file)
   mkdir -p "$out/artifacts"
   [ -d "$XML_SRC" ] || return 0
-  collect_xml "$out/test-results"
+  collect_xml "$out/test-results" >/dev/null
   case "$REPORT_STYLE" in
     status)
       cp -f "$XML_SRC/$f" "$out/" 2>/dev/null || :
