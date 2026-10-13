@@ -44,6 +44,8 @@ jdbc category compiles cases with javac.
 /entrypoint.sh <command> [<args>...]
 ```
 
+A CI that splits a category across containers has [four more](#verbs-for-a-split-run).
+
 One category per run. The argument overrides `$TEST_SUITE`; give it either way.
 
 | Verb       | What it does                                                                         |
@@ -405,6 +407,24 @@ A run in which no case started is a failure, not a pass.
 JUnit XML from the run is copied into `$TEST_REPORT`. Three categories write no XML —
 isolation, sql_by_cci and ha_repl — and for those `test` prints one warning line and judges the
 run from the result file as usual.
+
+### Verbs for a split run
+
+A CI that runs one category over many containers decides the split itself: which container gets
+which cases, and when the whole run passes. These verbs do the parts that need to know CTP and the
+case trees, for `sql`, `medium` and `shell`. Each takes paths, writes only under them, and knows
+nothing of the CI or of the other containers. The category is an argument here, never read from
+`$TEST_SUITE`.
+
+| Verb | Arguments | What it does |
+| ---- | --------- | ------------ |
+| `cases` | `<category> <dir>` | Prints every case file under `<dir>`, one a line. A shell case is `<name>/cases/<name>.sh`. |
+| `keep` | `<unit> <root> <list>` | Deletes every unit under `<root>` that `<list>` does not name. Entries are relative to `/home`. With `dir` they are top-level directories, kept whole; with `case` they are case files, and the `cases/` directory holding each is kept. |
+| `results` | `<category> <out>` | Copies the result file into `<out>` (`summary_info`, merged from the whole result tree, or `test_status.data`) and the JUnit XML into `<out>/test-results`; for `shell`, `feedback.log` into `<out>/artifacts` as well. Works after a `test` that was killed part way. |
+| `evidence` | `<category> <out> <cap>` | Archives the CTP log tree into `<out>/artifacts/ctp_log.tgz` and copies `ERROR_BACKUP` into `<out>/artifacts/ERROR_BACKUP`. A file larger than `<cap>` (`10G`, `500M`) is listed in `oversized.tsv` instead. |
+
+`checkout` also takes a full commit SHA for a tree that already has its `.git` (mounted, or checked
+out before; a fresh clone takes branches only), and fails if the tree does not end on that commit.
 
 ### Run a container
 
