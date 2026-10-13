@@ -11,10 +11,7 @@ Usage: /entrypoint.sh checkout [<category>]
        /entrypoint.sh cases <category> <dir>
        /entrypoint.sh keep <unit> <root> <list>
        /entrypoint.sh results <category> <out>
-       /entrypoint.sh count <category> <out>
        /entrypoint.sh evidence <category> <out> <cap>
-       /entrypoint.sh failed <category> <out> <log-dir>
-       /entrypoint.sh times <out>
        /entrypoint.sh <command> [<args>...]
 
 <category> overrides $TEST_SUITE. One category per run.
@@ -49,11 +46,8 @@ node itself, so it is only for collecting by hand.
 The rest serve a CI that splits a category across containers (sql, medium, shell):
   cases     the case files under <dir>, one a line
   keep      deletes every <unit> (dir or case) under <root> that <list> does not name
-  results   copies the result file 'count' reads and the JUnit XML into <out>
-  count     found= exec= pass= fail= skip= of the results in <out>
+  results   copies the result file and the JUnit XML into <out>
   evidence  archives the CTP logs and ERROR_BACKUP into <out>/artifacts, files over <cap> left out
-  failed    the failed cases in <out>, one a line; the n-th one's log goes to <log-dir>/<n>.log
-  times     <case path> <seconds> for every case feedback.log in <out> timed
 EOF
 }
 
@@ -1036,7 +1030,7 @@ function result_file ()
   case "$REPORT_STYLE" in
     status)    echo test_status.data ;;
     sqlresult) echo summary_info ;;
-    *) echo "** ERROR: '$TEST_SUITE' has no result file to count" >&2; exit 1 ;;
+    *) echo "** ERROR: '$TEST_SUITE' has no result file" >&2; exit 1 ;;
   esac
 }
 
@@ -1093,29 +1087,6 @@ function copy_results ()
   esac
 }
 
-function count_results ()
-{
-  local out=$1 f
-  f=$(result_file)
-  if [ ! -f "$out/$f" ]; then
-    printf 'found=no\nexec=0\npass=0\nfail=0\nskip=0\n'
-    return 0
-  fi
-  case "$REPORT_STYLE" in
-    status)
-      awk -F= '/total_executed_case_count/ {e = $2 + 0}
-               /total_success_case_count/  {s = $2 + 0}
-               /total_fail_case_count/     {f = $2 + 0}
-               /total_skip_case_count/     {k = $2 + 0}
-               END {printf "found=yes\nexec=%d\npass=%d\nfail=%d\nskip=%d\n", e, s, f, k}' "$out/$f" ;;
-    sqlresult)
-      awk '/:nok[[:space:]]+[0-9]+ms$/ {f++; next}
-           /:ok[[:space:]]+[0-9]+ms$/  {s++; next}
-           /:[[:space:]]+[0-9]+ms$/    {k++}
-           END {printf "found=yes\nexec=%d\npass=%d\nfail=%d\nskip=%d\n", s + f, s, f, k}' "$out/$f" ;;
-  esac
-}
-
 function keep_evidence ()
 {
   local out=$1 cap
@@ -1143,62 +1114,6 @@ function keep_evidence ()
       printf '%s\t%s\n' "$(basename "$f")" "$sz" >> "$out/artifacts/ERROR_BACKUP/oversized.tsv" || :
     fi
   done < <(find "$WORKDIR/ERROR_BACKUP" -maxdepth 1 -type f 2>/dev/null)
-}
-
-# A failure body is read through first: a log can hold a literal <testcase or <failure.
-FAILED_AWK='
-  BEGIN { while (idx != "" && (getline line < idx) > 0) { split(line, f, "\t"); want[f[1]] = f[2] } }
-  body != "" {
-    if (/\]\]><\/failure>/) { sub(/\]\]><\/failure>.*$/, ""); print > body; close(body); body = ""; next }
-    print > body
-    next
-  }
-  /<testcase/ { cur = ""; if (match($0, / name="[^"]*"/)) cur = substr($0, RSTART + 7, RLENGTH - 8) }
-  /<failure/ && cur != "" {
-    if (idx == "") { print cur; n = ++k }
-    else if (cur in want) { n = want[cur] }
-    else { cur = ""; next }
-    body = dir "/" n ".log"
-    rest = $0
-    sub(/^.*<!\[CDATA\[/, "", rest)
-    if (rest ~ /\]\]><\/failure>/) { sub(/\]\]><\/failure>.*$/, "", rest); print rest > body; close(body); body = "" }
-    else if (rest != "") print rest > body
-    cur = ""
-    next
-  }
-  /<\/testcase>/ { cur = "" }
-'
-
-function list_failed ()
-{
-  local out=$1 logs=$2
-  local f
-  f=$(result_file)
-  [ -z "$(ls -A "$logs" 2>/dev/null)" ] || { echo "** ERROR: $logs is not empty" >&2; exit 1; }
-  mkdir -p "$logs"
-  case "$REPORT_STYLE" in
-    status)
-      find "$out" -type f -name test-shell.xml -exec awk -v dir="$logs" -v idx= "$FAILED_AWK" {} + ;;
-    sqlresult)
-      [ -f "$out/$f" ] || return 0
-      { grep -E ':nok[[:space:]]+[0-9]+ms$' "$out/$f" || :; } \
-        | sed -e 's/:nok[[:space:]].*$//' -e "s#^$WORKDIR/$TC_REPO/##" > "$logs/failed.list"
-      awk '{printf "%s\t%d\n", $0, NR}' "$logs/failed.list" > "$logs/failed.idx"
-      find "$out" -type f -name '*.xml' ! -name summary.xml \
-        -exec awk -v dir="$logs" -v idx="$logs/failed.idx" "$FAILED_AWK" {} +
-      cat "$logs/failed.list"
-      rm -f "$logs/failed.list" "$logs/failed.idx" ;;
-  esac
-}
-
-function case_times ()
-{
-  local log=$1/artifacts/feedback.log
-  [ -f "$log" ] || return 0
-  { grep -E '^\[(OK|NOK)\]' "$log" || :; } | awk '
-    { ms = ""; path = ""
-      for (i = NF; i > 1; i--) if ($i ~ /^EnvId=/) { ms = $(i-1); path = $(i-2); break }
-      if (ms ~ /^[0-9]+$/ && path != "") printf "%s\t%.3f\n", path, ms / 1000 }'
 }
 
 function check_args ()
@@ -1242,23 +1157,18 @@ case "$1" in
     # Reaping zombies is PID 1's job; a shell in wait does it, 'sleep' alone does not.
     while :; do sleep 3600 & wait $!; done
     ;;
-  cases|results|count|evidence|failed)
+  cases|results|evidence)
     verb=$1; shift; check_args "$verb" "$@"
     TEST_SUITE=$1; shift
     resolve_category
     case "$verb" in
       cases)    list_cases "$@" ;;
       results)  copy_results "$@" ;;
-      count)    count_results "$@" ;;
       evidence) keep_evidence "$@" ;;
-      failed)   list_failed "$@" ;;
     esac
     ;;
   keep)
     shift; check_args keep "$@"; keep_cases "$@"
-    ;;
-  times)
-    shift; check_args times "$@"; case_times "$@"
     ;;
   "")
     usage; exit 1
