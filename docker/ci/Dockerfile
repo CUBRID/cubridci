@@ -13,10 +13,11 @@ ARG DBD_CUBRID_SHA256=1552e9b2bb93d8a32010f2bb77dc4f0c152971aed019ce42e494e86f24
 # glibc-gconv-extra comes in with perl-devel and is not in the base image, so it goes back out.
 # sshpass: the controller reaches the other nodes with CTP's own password account.
 # gettext: envsubst, which CMS cases use to fill their JSON request templates (regression VMs have it).
+# valgrind-gdb: vgdb, through which cases attach gdb to a client under valgrind; valgrind only recommends it.
 RUN set -ex \
         && dnf install -y epel-release \
         && dnf install -y --setopt=tsflags=nodocs --setopt=install_weak_deps=False \
-                gcc-c++ gdb git make valgrind \
+                gcc-c++ gdb git make valgrind valgrind-gdb \
                 vim-minimal lsof procps-ng file diffutils which csh \
                 glibc-locale-source glibc-langpack-en glibc-langpack-ko \
                 net-tools telnet wget \
