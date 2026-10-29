@@ -71,8 +71,8 @@ RUN set -ex \
         && chmod -R a+rwX $GRADLE_USER_HOME
 
 # The 3rdparty tarballs and pl_engine's gradle dependencies at this CUBRID commit; move it when the
-# engine bumps a version. pl_server resolves cubrid-jdbc at configuration time, so an empty jar
-# stands in. Of the scratch gradle home only caches/modules-2 is kept.
+# engine bumps a version. cubridJdbcPath keeps gradle off maven.cubrid.org. Of the scratch gradle
+# home only caches/modules-2 is kept.
 ARG CUBRID_COMMIT=3ca42d9a71bf038ca7c67586d5dcfde12984e451
 RUN set -ex \
         && git init -q /tmp/cubrid \
@@ -80,11 +80,10 @@ RUN set -ex \
         && git -C /tmp/cubrid fetch -q --depth 1 --filter=blob:none \
              https://github.com/CUBRID/cubrid.git $CUBRID_COMMIT \
         && git -C /tmp/cubrid checkout -q FETCH_HEAD \
-        && sed -n 's/^set(\(WITH_[A-Z0-9_]*_URL\) "\(.*\)").*/\1 \2/p' /tmp/cubrid/3rdparty/CMakeLists.txt \
+        && sed -n 's/^set(\(WITH_[A-Z0-9_]*_URL\) "\([^"]*\)").*/\1 \2/p' /tmp/cubrid/3rdparty/CMakeLists.txt \
              | while read -r var url; do \
                  curl -fsSL --create-dirs -o "$CUBRID_DOWNLOAD_CACHE/$var/${url##*/}" "$url" || exit; \
                done \
-        && touch /tmp/cubrid/cubrid-jdbc-0.jar \
         && $GRADLE_USER_HOME/wrapper/dists/gradle-$GRADLE_VERSION-bin/$GRADLE_DIST_HASH/gradle-$GRADLE_VERSION/bin/gradle \
              --gradle-user-home /tmp/gradle-home --no-daemon --write-verification-metadata sha256 \
              -p /tmp/cubrid/pl_engine -PcubridJdbcPath=/tmp/cubrid help \
