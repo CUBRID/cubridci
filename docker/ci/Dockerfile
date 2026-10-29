@@ -25,10 +25,13 @@ RUN set -ex \
         && dnf clean all -y \
         && rm -rf /var/cache/dnf
 
+# The engine's CMake looks here for the JDK and the 3rdparty tarballs before downloading them.
+ENV CUBRID_DOWNLOAD_CACHE /opt/download-cache
 ARG JDK_DIR=jdk8u442-b06
 ARG JDK_URL="https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u442-b06/OpenJDK8U-jdk_x64_linux_hotspot_8u442b06.tar.gz"
 RUN set -ex \
-        && curl -fsSL "$JDK_URL" | tar xzf - -C /opt \
+        && curl -fsSL --create-dirs -o "$CUBRID_DOWNLOAD_CACHE/jdk/${JDK_URL##*/}" "$JDK_URL" \
+        && tar xzf $CUBRID_DOWNLOAD_CACHE/jdk/* -C /opt \
         && ln -s /opt/$JDK_DIR /opt/jdk8 \
         && rm -rf /opt/jdk8/src.zip /opt/jdk8/sample /opt/jdk8/man
 
@@ -66,6 +69,28 @@ RUN set -ex \
         && "$dist/gradle-$GRADLE_VERSION/bin/gradle" --version > /dev/null \
         && touch "$dist/gradle-$GRADLE_VERSION-bin.zip.ok" \
         && chmod -R a+rwX $GRADLE_USER_HOME
+
+# The 3rdparty tarballs and pl_engine's gradle dependencies at this CUBRID commit; move it when the
+# engine bumps a version. pl_server resolves cubrid-jdbc at configuration time, so an empty jar
+# stands in. Of the scratch gradle home only caches/modules-2 is kept.
+ARG CUBRID_COMMIT=3ca42d9a71bf038ca7c67586d5dcfde12984e451
+RUN set -ex \
+        && git init -q /tmp/cubrid \
+        && git -C /tmp/cubrid sparse-checkout set 3rdparty pl_engine \
+        && git -C /tmp/cubrid fetch -q --depth 1 --filter=blob:none \
+             https://github.com/CUBRID/cubrid.git $CUBRID_COMMIT \
+        && git -C /tmp/cubrid checkout -q FETCH_HEAD \
+        && sed -n 's/^set(\(WITH_[A-Z0-9_]*_URL\) "\(.*\)").*/\1 \2/p' /tmp/cubrid/3rdparty/CMakeLists.txt \
+             | while read -r var url; do \
+                 curl -fsSL --create-dirs -o "$CUBRID_DOWNLOAD_CACHE/$var/${url##*/}" "$url" || exit; \
+               done \
+        && touch /tmp/cubrid/cubrid-jdbc-0.jar \
+        && $GRADLE_USER_HOME/wrapper/dists/gradle-$GRADLE_VERSION-bin/$GRADLE_DIST_HASH/gradle-$GRADLE_VERSION/bin/gradle \
+             --gradle-user-home /tmp/gradle-home --no-daemon --write-verification-metadata sha256 \
+             -p /tmp/cubrid/pl_engine -PcubridJdbcPath=/tmp/cubrid help \
+        && mkdir -p $GRADLE_USER_HOME/caches \
+        && mv /tmp/gradle-home/caches/modules-2 $GRADLE_USER_HOME/caches/ \
+        && rm -rf /tmp/cubrid /tmp/gradle-home
 
 ENV WORKDIR /home
 ENV JAVA_HOME /opt/jdk8
