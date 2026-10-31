@@ -70,26 +70,24 @@ RUN set -ex \
         && touch "$dist/gradle-$GRADLE_VERSION-bin.zip.ok" \
         && chmod -R a+rwX $GRADLE_USER_HOME
 
-# The 3rdparty tarballs and pl_engine's gradle dependencies at this CUBRID commit; move it when the
-# engine bumps a version. cubridJdbcPath keeps gradle off maven.cubrid.org. Of the scratch gradle
-# home only caches/modules-2 is kept.
-ARG CUBRID_COMMIT=3ca42d9a71bf038ca7c67586d5dcfde12984e451
+# 3rdparty.list and gradle-deps copy what CUBRID/cubrid's 3rdparty/CMakeLists.txt and pl_engine
+# download; update them when the engine bumps a version. --write-verification-metadata is what
+# makes gradle download the jars; help alone fetches only the settings plugin. The scratch gradle
+# home keeps gradle's own caches (154MB) out of the image; only caches/modules-2 moves in.
+COPY 3rdparty.list /tmp/
+COPY gradle-deps /tmp/gradle-deps/
 RUN set -ex \
-        && git init -q /tmp/cubrid \
-        && git -C /tmp/cubrid sparse-checkout set 3rdparty pl_engine \
-        && git -C /tmp/cubrid fetch -q --depth 1 --filter=blob:none \
-             https://github.com/CUBRID/cubrid.git $CUBRID_COMMIT \
-        && git -C /tmp/cubrid checkout -q FETCH_HEAD \
-        && sed -n 's/^set(\(WITH_[A-Z0-9_]*_URL\) "\([^"]*\)").*/\1 \2/p' /tmp/cubrid/3rdparty/CMakeLists.txt \
-             | while read -r var url; do \
-                 curl -fsSL --create-dirs -o "$CUBRID_DOWNLOAD_CACHE/$var/${url##*/}" "$url" || exit; \
-               done \
+        && while read -r var url sha256; do \
+             file="$CUBRID_DOWNLOAD_CACHE/$var/${url##*/}" \
+             && curl -fsSL --create-dirs -o "$file" "$url" \
+             && echo "$sha256  $file" | sha256sum -c - || exit; \
+           done < /tmp/3rdparty.list \
         && $GRADLE_USER_HOME/wrapper/dists/gradle-$GRADLE_VERSION-bin/$GRADLE_DIST_HASH/gradle-$GRADLE_VERSION/bin/gradle \
              --gradle-user-home /tmp/gradle-home --no-daemon --write-verification-metadata sha256 \
-             -p /tmp/cubrid/pl_engine -PcubridJdbcPath=/tmp/cubrid help \
+             -p /tmp/gradle-deps help \
         && mkdir -p $GRADLE_USER_HOME/caches \
         && mv /tmp/gradle-home/caches/modules-2 $GRADLE_USER_HOME/caches/ \
-        && rm -rf /tmp/cubrid /tmp/gradle-home
+        && rm -rf /tmp/3rdparty.list /tmp/gradle-deps /tmp/gradle-home
 
 ENV WORKDIR /home
 ENV JAVA_HOME /opt/jdk8
