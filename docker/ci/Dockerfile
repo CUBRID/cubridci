@@ -25,10 +25,13 @@ RUN set -ex \
         && dnf clean all -y \
         && rm -rf /var/cache/dnf
 
+# The engine's CMake looks here for the JDK and the 3rdparty tarballs before downloading them.
+ENV CUBRID_DOWNLOAD_CACHE /opt/download-cache
 ARG JDK_DIR=jdk8u442-b06
 ARG JDK_URL="https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u442-b06/OpenJDK8U-jdk_x64_linux_hotspot_8u442b06.tar.gz"
 RUN set -ex \
-        && curl -fsSL "$JDK_URL" | tar xzf - -C /opt \
+        && curl -fsSL --create-dirs -o "$CUBRID_DOWNLOAD_CACHE/jdk/${JDK_URL##*/}" "$JDK_URL" \
+        && tar xzf $CUBRID_DOWNLOAD_CACHE/jdk/* -C /opt \
         && ln -s /opt/$JDK_DIR /opt/jdk8 \
         && rm -rf /opt/jdk8/src.zip /opt/jdk8/sample /opt/jdk8/man
 
@@ -66,6 +69,29 @@ RUN set -ex \
         && "$dist/gradle-$GRADLE_VERSION/bin/gradle" --version > /dev/null \
         && touch "$dist/gradle-$GRADLE_VERSION-bin.zip.ok" \
         && chmod -R a+rwX $GRADLE_USER_HOME
+
+# 3rdparty.list and gradle-deps copy what CUBRID/cubrid's 3rdparty/CMakeLists.txt and pl_engine
+# download; update them when the engine bumps a version. --write-verification-metadata is what
+# makes gradle download the jars; help alone fetches only the settings plugin. The scratch gradle
+# home keeps gradle's own caches (154MB) out of the image; only caches/modules-2 moves in.
+COPY 3rdparty.list /tmp/
+COPY gradle-deps /tmp/gradle-deps/
+RUN set -ex \
+        && while read -r var url sha256; do \
+             file="$CUBRID_DOWNLOAD_CACHE/$var/${url##*/}" \
+             && curl -fsSL --create-dirs -o "$file" "$url" \
+             && echo "$sha256  $file" | sha256sum -c - || exit; \
+           done < /tmp/3rdparty.list \
+        && $GRADLE_USER_HOME/wrapper/dists/gradle-$GRADLE_VERSION-bin/$GRADLE_DIST_HASH/gradle-$GRADLE_VERSION/bin/gradle \
+             --gradle-user-home /tmp/gradle-home --no-daemon --write-verification-metadata sha256 \
+             -p /tmp/gradle-deps help \
+        && mkdir -p $GRADLE_USER_HOME/caches \
+        && mv /tmp/gradle-home/caches/modules-2 $GRADLE_USER_HOME/caches/ \
+        && rm -rf /tmp/3rdparty.list /tmp/gradle-deps /tmp/gradle-home
+
+# Gradle downloads a dependency the image lacks without a word; warn as the engine's 3rdparty
+# fetch does.
+COPY warn-downloads.gradle $GRADLE_USER_HOME/init.d/
 
 ENV WORKDIR /home
 ENV JAVA_HOME /opt/jdk8
