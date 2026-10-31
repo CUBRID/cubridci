@@ -89,6 +89,10 @@ RUN set -ex \
         && mv /tmp/gradle-home/caches/modules-2 $GRADLE_USER_HOME/caches/ \
         && rm -rf /tmp/3rdparty.list /tmp/gradle-deps /tmp/gradle-home
 
+# Gradle downloads a dependency the image lacks without a word; warn as the engine's 3rdparty
+# fetch does.
+COPY warn-downloads.gradle $GRADLE_USER_HOME/init.d/
+
 ENV WORKDIR /home
 ENV JAVA_HOME /opt/jdk8
 

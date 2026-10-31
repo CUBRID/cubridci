@@ -1,0 +1,13 @@
+def cache = new File(gradle.gradleUserHomeDir, 'caches/modules-2/files-2.1')
+def modules = {
+  cache.listFiles().collectMany { g ->
+    g.listFiles().collectMany { m -> m.listFiles().collect { v -> "${g.name}:${m.name}:${v.name}" } }
+  } as Set
+}
+def before = modules()
+gradle.buildFinished {
+  def added = modules() - before
+  if (added) {
+    logger.warn("WARNING: downloaded ${added.sort().join(', ')}. The build image needs an update.")
+  }
+}
