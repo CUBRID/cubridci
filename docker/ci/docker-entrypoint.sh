@@ -141,6 +141,7 @@ function run_build ()
     tail -500 build.log
     return 1
   fi
+  grep -B2 'needs an update' build.log || true
 }
 
 function run_dist ()
