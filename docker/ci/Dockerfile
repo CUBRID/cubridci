@@ -33,7 +33,8 @@ RUN set -ex \
         && curl -fsSL --create-dirs -o "$CUBRID_DOWNLOAD_CACHE/jdk/${JDK_URL##*/}" "$JDK_URL" \
         && tar xzf $CUBRID_DOWNLOAD_CACHE/jdk/* -C /opt \
         && ln -s /opt/$JDK_DIR /opt/jdk8 \
-        && rm -rf /opt/jdk8/src.zip /opt/jdk8/sample /opt/jdk8/man
+        && rm -rf /opt/jdk8/src.zip /opt/jdk8/sample /opt/jdk8/man \
+        && /opt/jdk8/bin/java -version
 
 # bison 3 for PR #1125; appstream has only 3.0.4
 ARG BISON_VERSION=3.0.5
