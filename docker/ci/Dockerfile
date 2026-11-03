@@ -19,7 +19,7 @@ RUN set -x \
                 devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
                 ncurses-devel cmake ant flex sclo-git212 wget libxslt \
                 rpm-build libtool libtool-ltdl autoconf automake \
-                which ccache \
+                which \
                 perl-core \
         && yum clean all -y \
         && rm -rf /var/cache/yum
@@ -73,9 +73,10 @@ RUN localedef -f UTF-8 -i ko_KR ko_KR.UTF-8 \
  && localedef -f UTF-8 -i en_US en_US.UTF-8
 ENV LC_ALL=en_US
 
-# ccache configuration
-ENV CC="ccache gcc"
-ENV CXX="ccache g++"
+# No ccache: Jenkins starts every build with an empty cache, and ccache 3.1.6 compiles the
+# preprocessed source, where a /* fall through */ comment no longer silences -Wimplicit-fallthrough.
+ENV CC=gcc
+ENV CXX=g++
 
 COPY docker-entrypoint.sh /entrypoint.sh
 
