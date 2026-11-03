@@ -1,29 +1,36 @@
-FROM rockylinux/rockylinux:8.10
+FROM centos:6.10
 
 LABEL Description="This is a build environment image for CUBRID"
 
+# CentOS 6 is end of life: its packages are only on vault.centos.org.
 RUN set -ex \
-        && dnf install -y dnf-plugins-core \
-        && { dnf config-manager --set-enabled powertools \
-             || dnf config-manager --set-enabled crb; } \
-        && dnf clean all -y \
-        && rm -rf /var/cache/dnf
-
-# java-devel: find_package(JNI) looks under /usr/lib/jvm, not at the Temurin JDK
-RUN set -ex \
-        && dnf install -y epel-release \
-        && dnf install -y --setopt=tsflags=nodocs --setopt=install_weak_deps=False \
-                gcc gcc-c++ make cmake \
-                python2-devel python3-devel \
-                elfutils-libelf-devel systemtap-sdt-devel libstdc++-static \
-                ncurses-devel ant flex git \
+        && vault() { sed -i -e 's|^mirrorlist=|#mirrorlist=|' \
+                -e 's|^# *baseurl=http://mirror.centos.org|baseurl=https://vault.centos.org|' "$@"; } \
+        && vault /etc/yum.repos.d/CentOS-Base.repo \
+        && yum install -y centos-release-scl \
+        && vault /etc/yum.repos.d/CentOS-SCLo-scl.repo /etc/yum.repos.d/CentOS-SCLo-scl-rh.repo \
+        && yum install -y --setopt=tsflags=nodocs \
+                devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make \
+                devtoolset-8-elfutils-libelf-devel devtoolset-8-systemtap-sdt-devel \
+                ncurses-devel ant flex sclo-git212 \
                 rpm-build libtool libtool-ltdl autoconf automake \
-                which ccache unzip \
+                which unzip \
                 perl-core \
-                java-1.8.0-openjdk-devel \
-                glibc-langpack-en \
-        && dnf clean all -y \
-        && rm -rf /var/cache/dnf
+        && yum clean all -y \
+        && rm -rf /var/cache/yum
+
+# What `scl enable devtoolset-8 sclo-git212` sets. gha-ci runs its steps in
+# `bash --noprofile --norc` and not through the entrypoint, so it has to be the environment.
+ENV PATH /opt/rh/devtoolset-8/root/usr/bin:/opt/rh/sclo-git212/root/usr/bin:$PATH
+ENV LD_LIBRARY_PATH /opt/rh/devtoolset-8/root/usr/lib64:/opt/rh/devtoolset-8/root/usr/lib:/opt/rh/devtoolset-8/root/usr/lib64/dyninst:/opt/rh/devtoolset-8/root/usr/lib/dyninst
+ENV PKG_CONFIG_PATH /opt/rh/devtoolset-8/root/usr/lib64/pkgconfig
+
+# base has only cmake 2.8
+ARG CMAKE_VERSION=3.26.3
+RUN set -ex \
+        && curl -fsSL https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-x86_64.tar.gz \
+           | tar xzf - -C /usr --strip-components=1 \
+        && cmake --version
 
 # The engine's CMake looks here for the JDK and the 3rdparty tarballs before downloading them.
 ENV CUBRID_DOWNLOAD_CACHE /opt/download-cache
@@ -38,7 +45,10 @@ RUN set -ex \
         && rm -rf /opt/jdk8/src.zip /opt/jdk8/sample /opt/jdk8/man \
         && /opt/jdk8/bin/java -version
 
-# bison 3 for PR #1125; appstream has only 3.0.4
+# ant pulls in java-1.7.0-openjdk as /usr/bin/java, and gradle 8 needs 8.
+ENV JAVA_HOME /opt/jdk8
+
+# bison 3 for PR #1125; base has only 2.4.1
 ARG BISON_VERSION=3.0.5
 RUN set -ex \
         && curl -fsSL https://ftp.gnu.org/gnu/bison/bison-$BISON_VERSION.tar.gz | tar xzf - \
@@ -47,7 +57,7 @@ RUN set -ex \
         && make -j"$(nproc)" && make install-strip \
         && cd .. && rm -rf bison-$BISON_VERSION
 
-# powertools has only ninja 1.8.2
+# base has no ninja
 ARG NINJA_VERSION=1.11.1
 RUN set -ex \
         && curl -fsSL https://github.com/ninja-build/ninja/archive/refs/tags/v$NINJA_VERSION.tar.gz | tar xzf - \
@@ -56,6 +66,18 @@ RUN set -ex \
         && cmake --build build-cmake -j"$(nproc)" \
         && install -s -m 755 build-cmake/ninja /usr/bin/ninja \
         && cd .. && rm -rf ninja-$NINJA_VERSION
+
+# EPEL 6 has only ccache 3.1.6, which compiles the preprocessed source: a /* fall through */
+# comment is gone by then and -Werror=implicit-fallthrough fails the build. 3.7.7 is the
+# version in build_rl8.10, whose log gha-ci's build step reads.
+ARG CCACHE_VERSION=3.7.7
+RUN set -ex \
+        && curl -fsSL https://github.com/ccache/ccache/releases/download/v$CCACHE_VERSION/ccache-$CCACHE_VERSION.tar.gz | tar xzf - \
+        && cd ccache-$CCACHE_VERSION \
+        && ./configure --prefix=/usr \
+        && make -j"$(nproc)" && make install \
+        && cd .. && rm -rf ccache-$CCACHE_VERSION \
+        && ccache --version
 
 # pl_engine's gradle wrapper downloads this every build, with a 10s network timeout.
 # The hash directory name is the wrapper's own base36(md5(distributionUrl)).
@@ -97,12 +119,11 @@ RUN set -ex \
 COPY warn-downloads.gradle $GRADLE_USER_HOME/init.d/
 
 ENV WORKDIR /home
-ENV JAVA_HOME /opt/jdk8
 
 ENV CUBRID $WORKDIR/CUBRID
 ENV CUBRID_DATABASES $CUBRID/databases
 ENV PATH $JAVA_HOME/bin:$CUBRID/bin:$PATH
-ENV LD_LIBRARY_PATH $CUBRID/lib:$CUBRID/cci/lib
+ENV LD_LIBRARY_PATH $CUBRID/lib:$CUBRID/cci/lib:$LD_LIBRARY_PATH
 
 ENV TZ Asia/Seoul
 ENV LC_ALL=en_US

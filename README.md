@@ -1,8 +1,8 @@
-[![image size](https://img.shields.io/docker/image-size/cubridci/cubridci/build_rl8.10?label=image%20size)](https://hub.docker.com/r/cubridci/cubridci/tags?name=build_rl8.10)
+[![image size](https://img.shields.io/docker/image-size/cubridci/cubridci/build_cl6.10?label=image%20size)](https://hub.docker.com/r/cubridci/cubridci/tags?name=build_cl6.10)
 
-# CUBRID build image — Rocky Linux 8.10
+# CUBRID build image — CentOS 6.10
 
-This branch defines `cubridci/cubridci:build_rl8.10`, the image that compiles CUBRID.
+This branch defines `cubridci/cubridci:build_cl6.10`, the image that compiles CUBRID.
 It is **build-only**: no CTP, no test cases, no test tooling. To run tests, use the
 [`test_rl8.10`](https://github.com/CUBRID/cubridci/tree/test_rl8.10) branch and its image.
 
@@ -11,24 +11,28 @@ The image definition is `docker/ci/` — `Dockerfile` and `docker-entrypoint.sh`
 ## The tag
 
 Jenkins multibranch on `ci.cubrid.org` builds `docker/ci` on every push to this branch and
-pushes the result as `cubridci/cubridci:build_rl8.10`. The tag appears on Docker Hub about a
+pushes the result as `cubridci/cubridci:build_cl6.10`. The tag appears on Docker Hub about a
 minute after the push. A new branch needs no job registration — Jenkins picks it up on its own.
 Jenkins itself is reachable only from the internal network.
 
 |            |                                                                                  |
 | ---------- | -------------------------------------------------------------------------------- |
-| Base       | `rockylinux/rockylinux:8.10`                                                      |
-| Size       | 1.02 GB on disk, 342 MiB to pull                                                  |
-| Toolchain  | gcc/g++ and make from the Rocky 8 appstream, cmake, ninja 1.11.1, bison 3.0.5, flex, ant, ccache |
-| JDK        | Temurin 8u442-b06 at `/opt/jdk8` (`JAVA_HOME`); `java-1.8.0-openjdk-devel` is also installed because `find_package(JNI)` looks under `/usr/lib/jvm` |
-| Python     | `python2-devel` and `python3-devel`                                               |
+| Base       | `centos:6.10`; packages from `vault.centos.org`                                  |
+| Size       | 1.63 GB on disk, 758 MB to pull                                                   |
+| Toolchain  | gcc/g++ 8.3.1 and make from devtoolset-8, git 2.12 from sclo-git212, cmake 3.26.3, ninja 1.11.1, bison 3.0.5, flex, ant, ccache 3.7.7 |
+| JDK        | Temurin 8u442-b06 at `/opt/jdk8` (`JAVA_HOME`); `ant` pulls in `java-1.7.0-openjdk-devel`, which is `/usr/bin/java` and where `find_package(JNI)` finds the headers, as in the `develop` image |
 | Locale, TZ | `en_US`, `Asia/Seoul`                                                             |
 
 `CC` and `CXX` are preset to `ccache gcc` and `ccache g++`.
 
-Two dependencies are built from source instead of installed from a repository: bison, because
-appstream carries only 3.0.4 and the parser needs 3.x, and ninja, because powertools carries
-only 1.8.2.
+devtoolset-8 and sclo-git212 are on `PATH` through the image environment rather than
+`scl enable`, so a shell that skips the profile — a GitHub Actions `container:` step — gets
+them too.
+
+Four tools come from upstream instead of a repository: cmake, because base carries only 2.8.12;
+bison, because base carries only 2.4.1 and the parser needs 3.x; ninja, which base does not
+carry; and ccache, because EPEL 6 carries only 3.1.6, which compiles the preprocessed source
+and so loses the `/* fall through */` comments that `-Werror=implicit-fallthrough` relies on.
 
 ## Usage
 
@@ -91,7 +95,7 @@ Set `BUILD_MIRROR` to a directory of bare clones and `checkout` borrows their ob
 docker run --rm \
   -v /home/build-cache/cubrid-mirror:/mirror:ro \
   -e BUILD_MIRROR=/mirror \
-  cubridci/cubridci:build_rl8.10 checkout
+  cubridci/cubridci:build_cl6.10 checkout
 ```
 
 `BUILD_MIRROR` set with no mirror there is an error, not a fallback — a silent 471 MB clone
@@ -112,7 +116,7 @@ Check the source out and build it, keeping both in a mounted workspace:
 docker run --rm \
   -v "$PWD/workspace:/home" \
   -e MAKEFLAGS=-j \
-  cubridci/cubridci:build_rl8.10 \
+  cubridci/cubridci:build_cl6.10 \
   bash -lc '/entrypoint.sh checkout && /entrypoint.sh build'
 ```
 
@@ -124,28 +128,15 @@ With source you already have on the host, mount it and skip `checkout`:
 docker run --rm \
   -v "$PWD/cubrid:/home/cubrid" \
   -e MAKEFLAGS=-j \
-  -e GIT_CONFIG_COUNT=1 \
-  -e GIT_CONFIG_KEY_0=safe.directory \
-  -e GIT_CONFIG_VALUE_0='*' \
-  cubridci/cubridci:build_rl8.10 build
+  cubridci/cubridci:build_cl6.10 build
 ```
 
-The `safe.directory` variables matter whenever the source comes from a bind mount. The
-container runs as root and the tree belongs to your host user, so git calls it dubious
-ownership and refuses to read it — which stops the build outright, since `build` counts the
-commits before it starts. A tree that `checkout` created inside the container is root-owned
-already and needs none of this.
+git here is 2.12, older than the ownership check git 2.35.2 added, so a mounted tree reads as
+it is, whoever owns it, and needs no `safe.directory`.
 
-An unreadable history — from this or from a missing mirror — stops at the same guard, which
-quotes git and names both causes:
-
-```
-** ERROR: cannot walk the history of cubrid; the build number would be empty.
-   git: fatal: detected dubious ownership in repository at '/home/cubrid'
-   ...
-   A tree checked out with BUILD_MIRROR needs that mirror mounted here too.
-   A bind-mounted tree owned by another user needs safe.directory.
-```
+An unreadable history — a tree checked out with `BUILD_MIRROR` and built without that mirror —
+stops at a guard before the build, which quotes git. Its hint about `safe.directory` is shared
+with `build_rl8.10` and does not apply here.
 
 To pack release artifacts as well:
 
@@ -153,7 +144,7 @@ To pack release artifacts as well:
 docker run --rm \
   -v "$PWD/workspace:/home" \
   -v "$PWD/packages:/packages" \
-  cubridci/cubridci:build_rl8.10 dist -o /packages
+  cubridci/cubridci:build_cl6.10 dist -o /packages
 ```
 
 ### Coverage builds
@@ -167,7 +158,7 @@ docker run --rm \
   -v "$PWD/workspace:/home" \
   -v "$PWD/gcov:/gcov" \
   -e GCOV_OUTPUT_DIR=/gcov \
-  cubridci/cubridci:build_rl8.10 \
+  cubridci/cubridci:build_cl6.10 \
   bash -lc '/entrypoint.sh checkout && /entrypoint.sh coverage'
 ```
 
@@ -197,7 +188,7 @@ consumer here is the test image, not that installer.
 writing into. The default working directory `/home` is fine, since the tree sits at
 `/home/cubrid`; a source tree mounted at `/home` itself needs this set somewhere else.
 
-Leave room on whatever volume `$GCOV_OUTPUT_DIR` points at. A full `develop` build measured
+Leave room on whatever volume `$GCOV_OUTPUT_DIR` points at. A full `develop` build on `build_rl8.10` measured
 241 MB for the install archive and 1.1 GB for the source one, from a 3.3 GB tree; the object
 files are 1.3 GB of that and the `.gcno` only 222 MB. The build itself took about 2.5 hours at
 `CMAKE_BUILD_PARALLEL_LEVEL=32`, most of it the third-party dependencies, which build serially.
@@ -213,7 +204,7 @@ ninja and the make generator:
 docker run --rm \
   -v "$PWD/workspace:/home" \
   -e CMAKE_BUILD_PARALLEL_LEVEL=4 \
-  cubridci/cubridci:build_rl8.10 build
+  cubridci/cubridci:build_cl6.10 build
 ```
 
 One job per GB of memory available to the container is a safe starting point.
