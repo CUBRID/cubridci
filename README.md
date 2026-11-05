@@ -404,9 +404,10 @@ comes from the runner's own result file: `summary_info` for sql and medium, `sum
 sql_by_cci, `test_status.data` for the five shell categories, isolation, jdbc, ha_repl and rqg.
 A run in which no case started is a failure, not a pass.
 
-JUnit XML from the run is copied into `$TEST_REPORT`. Three categories write no XML —
-isolation, sql_by_cci and ha_repl — and for those `test` prints one warning line and judges the
-run from the result file as usual.
+JUnit XML from the run is copied into `$TEST_REPORT`. isolation and ha_repl write no XML, and
+sql_by_cci writes none with a `cubrid-testtools` that lacks
+[CUBRID/cubrid-testtools#797](https://github.com/CUBRID/cubrid-testtools/pull/797). For those
+`test` prints one warning line and judges the run from the result file as usual.
 
 ### Verbs for a split run
 
@@ -596,4 +597,5 @@ names. It puts them back only if it reaches its last step, so a run killed part-
 injected build replaced by the shims. `test` refuses to start when it finds them; re-inject
 CUBRID, or rename the two files back by hand.
 
-**A JUnit XML absence is not an error.** isolation, sql_by_cci and ha_repl write none.
+**A JUnit XML absence is not an error.** isolation and ha_repl write none, and sql_by_cci writes
+none with a `cubrid-testtools` that lacks CUBRID/cubrid-testtools#797.
