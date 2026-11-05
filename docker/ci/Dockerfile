@@ -19,19 +19,11 @@ RUN set -ex \
         && yum clean all -y \
         && rm -rf /var/cache/yum
 
-# What `scl enable devtoolset-8 sclo-git212` sets. The develop image runs `scl enable` as its
-# ENTRYPOINT, but gha-ci runs its steps in `bash --noprofile --norc` and calls /entrypoint.sh
-# directly, so it has to be the environment.
+# Three of the variables `scl enable devtoolset-8 sclo-git212` sets, because nothing in this image
+# runs `scl enable`: develop runs it as its ENTRYPOINT, and gha-ci calls /entrypoint.sh directly.
 ENV PATH /opt/rh/devtoolset-8/root/usr/bin:/opt/rh/sclo-git212/root/usr/bin:$PATH
 ENV LD_LIBRARY_PATH /opt/rh/devtoolset-8/root/usr/lib64:/opt/rh/devtoolset-8/root/usr/lib:/opt/rh/devtoolset-8/root/usr/lib64/dyninst:/opt/rh/devtoolset-8/root/usr/lib/dyninst
 ENV PKG_CONFIG_PATH /opt/rh/devtoolset-8/root/usr/lib64/pkgconfig
-
-# base has only cmake 2.8
-ARG CMAKE_VERSION=3.26.3
-RUN set -ex \
-        && curl -fsSL https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-x86_64.tar.gz \
-           | tar xzf - -C /usr --strip-components=1 \
-        && cmake --version
 
 # The engine's CMake looks here for the JDK and the 3rdparty tarballs before downloading them.
 ENV CUBRID_DOWNLOAD_CACHE /opt/download-cache
@@ -48,6 +40,13 @@ RUN set -ex \
 
 # ant pulls in java-1.7.0-openjdk as /usr/bin/java, and gradle 8 needs Java 8.
 ENV JAVA_HOME /opt/jdk8
+
+# base has only cmake 2.8
+ARG CMAKE_VERSION=3.26.3
+RUN set -ex \
+        && curl -fsSL https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-x86_64.tar.gz \
+           | tar xzf - -C /usr --strip-components=1 \
+        && cmake --version
 
 # bison 3 for PR #1125; base has only 2.4.1
 ARG BISON_VERSION=3.0.5
@@ -76,7 +75,8 @@ RUN set -ex \
         && curl -fsSL https://github.com/ccache/ccache/releases/download/v$CCACHE_VERSION/ccache-$CCACHE_VERSION.tar.gz | tar xzf - \
         && cd ccache-$CCACHE_VERSION \
         && ./configure --prefix=/usr \
-        && make -j"$(nproc)" && make install \
+        && make -j"$(nproc)" \
+        && install -s -m 755 ccache /usr/bin/ccache \
         && cd .. && rm -rf ccache-$CCACHE_VERSION \
         && ccache --version
 

@@ -26,8 +26,7 @@ Jenkins itself is reachable only from the internal network.
 `CC` and `CXX` are preset to `ccache gcc` and `ccache g++`.
 
 devtoolset-8 and sclo-git212 are on `PATH` through the image environment rather than
-`scl enable`, so a shell that skips the profile — a GitHub Actions `container:` step — gets
-them too.
+`scl enable`, so every process in the container gets them, whatever starts it.
 
 Four tools come from upstream instead of a repository: cmake, because base carries only 2.8.12;
 bison, because base carries only 2.4.1 and the parser needs 3.x; ninja, which base does not
