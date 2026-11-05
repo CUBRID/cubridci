@@ -1030,6 +1030,8 @@ function result_file ()
   case "$REPORT_STYLE" in
     status)    echo test_status.data ;;
     sqlresult) echo summary_info ;;
+    # A split sql_by_cci run is read from its JUnit XML alone.
+    cciresult) ;;
     *) echo "** ERROR: '$TEST_SUITE' has no result file" >&2; exit 1 ;;
   esac
 }
