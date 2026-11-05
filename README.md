@@ -188,10 +188,11 @@ consumer here is the test image, not that installer.
 writing into. The default working directory `/home` is fine, since the tree sits at
 `/home/cubrid`; a source tree mounted at `/home` itself needs this set somewhere else.
 
-Leave room on whatever volume `$GCOV_OUTPUT_DIR` points at. A full `develop` build on `build_rl8.10` measured
-241 MB for the install archive and 1.1 GB for the source one, from a 3.3 GB tree; the object
-files are 1.3 GB of that and the `.gcno` only 222 MB. The build itself took about 2.5 hours at
-`CMAKE_BUILD_PARALLEL_LEVEL=32`, most of it the third-party dependencies, which build serially.
+Leave room on whatever volume `$GCOV_OUTPUT_DIR` points at. A full `develop` build on
+`build_rl8.10` measured 241 MB for the install archive and 1.1 GB for the source one, from a
+3.3 GB tree; the object files are 1.3 GB of that and the `.gcno` only 222 MB. The build itself
+took about 2.5 hours at `CMAKE_BUILD_PARALLEL_LEVEL=32`, most of it the third-party
+dependencies, which build serially.
 
 ### Parallelism on a memory-tight host
 

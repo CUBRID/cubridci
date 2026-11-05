@@ -19,8 +19,9 @@ RUN set -ex \
         && yum clean all -y \
         && rm -rf /var/cache/yum
 
-# What `scl enable devtoolset-8 sclo-git212` sets. gha-ci runs its steps in
-# `bash --noprofile --norc` and not through the entrypoint, so it has to be the environment.
+# What `scl enable devtoolset-8 sclo-git212` sets. The develop image runs `scl enable` as its
+# ENTRYPOINT, but gha-ci runs its steps in `bash --noprofile --norc` and calls /entrypoint.sh
+# directly, so it has to be the environment.
 ENV PATH /opt/rh/devtoolset-8/root/usr/bin:/opt/rh/sclo-git212/root/usr/bin:$PATH
 ENV LD_LIBRARY_PATH /opt/rh/devtoolset-8/root/usr/lib64:/opt/rh/devtoolset-8/root/usr/lib:/opt/rh/devtoolset-8/root/usr/lib64/dyninst:/opt/rh/devtoolset-8/root/usr/lib/dyninst
 ENV PKG_CONFIG_PATH /opt/rh/devtoolset-8/root/usr/lib64/pkgconfig
@@ -45,7 +46,7 @@ RUN set -ex \
         && rm -rf /opt/jdk8/src.zip /opt/jdk8/sample /opt/jdk8/man \
         && /opt/jdk8/bin/java -version
 
-# ant pulls in java-1.7.0-openjdk as /usr/bin/java, and gradle 8 needs 8.
+# ant pulls in java-1.7.0-openjdk as /usr/bin/java, and gradle 8 needs Java 8.
 ENV JAVA_HOME /opt/jdk8
 
 # bison 3 for PR #1125; base has only 2.4.1
@@ -69,7 +70,7 @@ RUN set -ex \
 
 # EPEL 6 has only ccache 3.1.6, which compiles the preprocessed source: a /* fall through */
 # comment is gone by then and -Werror=implicit-fallthrough fails the build. 3.7.7 is the
-# version in build_rl8.10, whose log gha-ci's build step reads.
+# version in build_rl8.10: gha-ci's build step counts cache hits and misses by its log wording.
 ARG CCACHE_VERSION=3.7.7
 RUN set -ex \
         && curl -fsSL https://github.com/ccache/ccache/releases/download/v$CCACHE_VERSION/ccache-$CCACHE_VERSION.tar.gz | tar xzf - \
