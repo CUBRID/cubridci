@@ -163,7 +163,7 @@ goes.
 | `shell_long`  | `cubrid-testcases-private`    | **yes**     | 131             | days          | yes       |
 | `cci`         | `cubrid-testcases-private`    | **yes**     | 322             | 90 min (est.) | yes       |
 | `isolation`   | `cubrid-testcases`            | no          | 6,778           | 5 to 9 hours  | no        |
-| `sql_by_cci`  | `cubrid-testcases`            | no          | 17,451          | about 41 min  | no        |
+| `sql_by_cci`  | `cubrid-testcases`            | no          | 17,451          | about 41 min  | yes       |
 | `jdbc`        | `cubrid-testcases-private`    | **yes**     | 2,407           | about 3 min   | yes       |
 | `ha_repl`     | `cubrid-testcases`            | no          | scenario-driven | see below     | no        |
 | `ha_shell`    | `cubrid-testcases-private`    | **yes**     | 373 case dirs   | see below     | yes       |
