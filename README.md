@@ -192,7 +192,7 @@ of its 57 branches — and the only lists there belong to the driver-server comp
 which are keyed by version and stop at 11.2.0. The nightly names a list that is not in the repo
 at all and gets away with it because it does not run cci through CTP; CTP refuses to start when
 that key points at a missing file, so the key is left empty instead. `$TEST_SCENARIO` runs part
-of the tree. Results land under `result/shell/`, and the report is `test-cci.xml`. A run over more than one case shares one
+of the tree. Results land under `result/shell/`, and the report is `test-cci.xml` (`<os>_<category>_<bits>_<build type>.xml` with CUBRID/cubrid-testtools#797). A run over more than one case shares one
 `ccidb` database, and that costs cases — see the known failures below.
 
 `ha_repl` runs the public `cubrid-testcases/sql` tree, and CTP converts those SQL cases to their
@@ -205,7 +205,7 @@ same way `shell_heavy` and `shell_long` are, with a 7,200 s case timeout — CTP
 repo. On top of the five shell keys it writes the master node as an env instance and the slave
 as that instance's `relatedhosts`; the ports and the HA port come from the `default.*` keys it
 inherits. Each case builds its own HA pair by calling `setup_ha_environment` from
-`$init_path/make_ha.sh`, which reaches the slave over ssh. The report is `test-ha_shell.xml`
+`$init_path/make_ha.sh`, which reaches the slave over ssh. The report is `test-ha_shell.xml` (`<os>_<category>_<bits>_<build type>.xml` with CUBRID/cubrid-testtools#797)
 under `result/shell/`.
 
 `rqg` generates random queries against a database and checks that the server survives them.
@@ -214,7 +214,7 @@ apart — so its conf comes from `conf/shell_ci.conf` like the other shell varia
 nightly regression's case timeout of 36,000 s and its exclude list,
 `random_query_generator/config/daily_regression_test_exclude_list_RQG.conf`, which is empty
 upstream — so nothing is excluded, and the one known failure below is enough to make a
-whole-tree run exit 1. Results land under `result/rqg/`, and the report is `test-rqg.xml`.
+whole-tree run exit 1. Results land under `result/rqg/`, and the report is `test-rqg.xml` (`<os>_<category>_<bits>_<build type>.xml` with CUBRID/cubrid-testtools#797).
 
 The generator itself is not in the test-cases repo. It is perl, it lives in
 `cubrid-testtools-internal`, and `checkout rqg` fetches that repo too; `test rqg` points
