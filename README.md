@@ -163,7 +163,7 @@ goes.
 | `shell_long`  | `cubrid-testcases-private`    | **yes**     | 131             | days          | yes       |
 | `cci`         | `cubrid-testcases-private`    | **yes**     | 322             | 90 min (est.) | yes       |
 | `isolation`   | `cubrid-testcases`            | no          | 6,778           | 5 to 9 hours  | no        |
-| `sql_by_cci`  | `cubrid-testcases`            | no          | 17,451          | about 41 min  | no        |
+| `sql_by_cci`  | `cubrid-testcases`            | no          | 17,451          | about 41 min  | yes       |
 | `jdbc`        | `cubrid-testcases-private`    | **yes**     | 2,407           | about 3 min   | yes       |
 | `ha_repl`     | `cubrid-testcases`            | no          | scenario-driven | see below     | no        |
 | `ha_shell`    | `cubrid-testcases-private`    | **yes**     | 373 case dirs   | see below     | yes       |
@@ -192,7 +192,7 @@ of its 57 branches — and the only lists there belong to the driver-server comp
 which are keyed by version and stop at 11.2.0. The nightly names a list that is not in the repo
 at all and gets away with it because it does not run cci through CTP; CTP refuses to start when
 that key points at a missing file, so the key is left empty instead. `$TEST_SCENARIO` runs part
-of the tree. Results land under `result/shell/`, and the report is `test-cci.xml`. A run over more than one case shares one
+of the tree. Results land under `result/shell/`, and the report is `test-cci.xml` (`<os>_<category>_<bits>_<build type>.xml` with CUBRID/cubrid-testtools#797). A run over more than one case shares one
 `ccidb` database, and that costs cases — see the known failures below.
 
 `ha_repl` runs the public `cubrid-testcases/sql` tree, and CTP converts those SQL cases to their
@@ -205,7 +205,7 @@ same way `shell_heavy` and `shell_long` are, with a 7,200 s case timeout — CTP
 repo. On top of the five shell keys it writes the master node as an env instance and the slave
 as that instance's `relatedhosts`; the ports and the HA port come from the `default.*` keys it
 inherits. Each case builds its own HA pair by calling `setup_ha_environment` from
-`$init_path/make_ha.sh`, which reaches the slave over ssh. The report is `test-ha_shell.xml`
+`$init_path/make_ha.sh`, which reaches the slave over ssh. The report is `test-ha_shell.xml` (`<os>_<category>_<bits>_<build type>.xml` with CUBRID/cubrid-testtools#797)
 under `result/shell/`.
 
 `rqg` generates random queries against a database and checks that the server survives them.
@@ -214,7 +214,7 @@ apart — so its conf comes from `conf/shell_ci.conf` like the other shell varia
 nightly regression's case timeout of 36,000 s and its exclude list,
 `random_query_generator/config/daily_regression_test_exclude_list_RQG.conf`, which is empty
 upstream — so nothing is excluded, and the one known failure below is enough to make a
-whole-tree run exit 1. Results land under `result/rqg/`, and the report is `test-rqg.xml`.
+whole-tree run exit 1. Results land under `result/rqg/`, and the report is `test-rqg.xml` (`<os>_<category>_<bits>_<build type>.xml` with CUBRID/cubrid-testtools#797).
 
 The generator itself is not in the test-cases repo. It is perl, it lives in
 `cubrid-testtools-internal`, and `checkout rqg` fetches that repo too; `test rqg` points
@@ -404,23 +404,24 @@ comes from the runner's own result file: `summary_info` for sql and medium, `sum
 sql_by_cci, `test_status.data` for the five shell categories, isolation, jdbc, ha_repl and rqg.
 A run in which no case started is a failure, not a pass.
 
-JUnit XML from the run is copied into `$TEST_REPORT`. Three categories write no XML —
-isolation, sql_by_cci and ha_repl — and for those `test` prints one warning line and judges the
-run from the result file as usual.
+JUnit XML from the run is copied into `$TEST_REPORT`. isolation and ha_repl write no XML, and
+sql_by_cci writes none with a `cubrid-testtools` that lacks
+[CUBRID/cubrid-testtools#797](https://github.com/CUBRID/cubrid-testtools/pull/797). For those
+`test` prints one warning line and judges the run from the result file as usual.
 
 ### Verbs for a split run
 
 A CI that runs one category over many containers decides the split itself: which container gets
 which cases, and when the whole run passes. These verbs do the parts that need to know CTP and the
-case trees, for `sql`, `medium` and `shell`. Each takes paths, writes only under them, and knows
-nothing of the CI or of the other containers. The category is an argument here, never read from
-`$TEST_SUITE`.
+case trees, for `sql`, `medium` and `shell`; `results` takes `sql_by_cci` too. Each takes paths,
+writes only under them, and knows nothing of the CI or of the other containers. The category is an
+argument here, never read from `$TEST_SUITE`.
 
 | Verb | Arguments | What it does |
 | ---- | --------- | ------------ |
 | `cases` | `<category> <dir>` | Prints every case file under `<dir>`, one a line. A shell case is `<name>/cases/<name>.sh`. |
 | `keep` | `<unit> <root> <list>` | Deletes every unit under `<root>` that `<list>` does not name. Entries are relative to `/home`. With `dir` they are top-level directories, kept whole; with `case` they are case files, and the `cases/` directory holding each is kept. |
-| `results` | `<category> <out>` | Copies the result file into `<out>` (`summary_info`, merged from the whole result tree, or `test_status.data`) and the JUnit XML into `<out>/test-results`; for `shell`, `feedback.log` into `<out>/artifacts` as well. Works after a `test` that was killed part way. |
+| `results` | `<category> <out>` | Copies the result file into `<out>` (`summary_info`, merged from the whole result tree, or `test_status.data`) and the JUnit XML into `<out>/test-results`; for `shell`, `feedback.log` into `<out>/artifacts` as well. For `sql_by_cci` it copies the JUnit XML alone, and `<out>/test-results` stays empty when CTP wrote none. Works after a `test` that was killed part way. |
 | `evidence` | `<category> <out> <cap>` | Archives the CTP log tree into `<out>/artifacts/ctp_log.tgz` and copies `ERROR_BACKUP` into `<out>/artifacts/ERROR_BACKUP`. A file larger than `<cap>` (`10G`, `500M`) is listed in `oversized.tsv` instead. |
 
 `checkout` also takes a full commit SHA for a tree that already has its `.git` (mounted, or checked
@@ -596,4 +597,5 @@ names. It puts them back only if it reaches its last step, so a run killed part-
 injected build replaced by the shims. `test` refuses to start when it finds them; re-inject
 CUBRID, or rename the two files back by hand.
 
-**A JUnit XML absence is not an error.** isolation, sql_by_cci and ha_repl write none.
+**A JUnit XML absence is not an error.** isolation and ha_repl write none, and sql_by_cci writes
+none with a `cubrid-testtools` that lacks CUBRID/cubrid-testtools#797.
