@@ -121,8 +121,8 @@ function report_test ()
   fi
 
   if [ -n "$xml_output" ]; then
-    # CTP writes its own JUnit report (<os>_<type>_<bits>.xml, e.g. linux_sql_64bit.xml)
-    # next to summary.xml since cubrid-testtools#769. Collect it for store_test_results;
+    # CTP writes its own JUnit report (<os>_<type>_<bits>_<build type>.xml, e.g. linux_sql_64bit_release.xml)
+    # next to summary.xml. Collect it for store_test_results;
     # per-case failure details (query, diff, source links) live in its <failure> CDATA
     # and are shown in the CircleCI 'Tests' tab, so they are no longer printed here.
     ncopied=0
