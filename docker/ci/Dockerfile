@@ -7,6 +7,10 @@ LABEL Description="This is a test environment image for CUBRID (rocky8, CTP runt
 ARG DBD_CUBRID_VER=10.1.0.0001
 ARG DBD_CUBRID_SHA256=1552e9b2bb93d8a32010f2bb77dc4f0c152971aed019ce42e494e86f24dce261
 
+# The JDK on the regression hosts of the categories gha-ci runs with this image (shell, sql, medium,
+# sql_by_cci), so a failure there reproduces here on the same JVM. Change it when they change.
+ARG JDK_RPM_VER=1:1.8.0.462.b08-2.el8
+
 # lcov needs EPEL; glibc-locale-source only feeds localedef, so drop it in the same layer.
 # perl-devel and ncurses-devel only build DBD::cubrid (the bundled CCI includes curses.h), and
 # Makefile.PL ignores a failed CCI build, so the static library is checked before make.
@@ -23,7 +27,7 @@ RUN set -ex \
                 glibc-locale-source glibc-langpack-en glibc-langpack-ko \
                 net-tools telnet wget bzip2 unzip \
                 sudo openssh-server openssh-clients \
-                java-1.8.0-openjdk-devel \
+                java-1.8.0-openjdk-devel-$JDK_RPM_VER \
                 dos2unix lcov bc jq expect sshpass gettext \
                 perl-DBI perl-Time-HiRes perl-Test-Simple \
         && localedef -f UTF-8 -i ko_KR ko_KR.UTF-8 \

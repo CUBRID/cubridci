@@ -23,7 +23,7 @@ Jenkins itself is reachable only from the internal network.
 | ---------- | ------------------------------------------------------------------------------------- |
 | Base       | `rockylinux/rockylinux:8.10`                                                           |
 | Size       | 786 MB on disk, 266 MiB to pull                                                        |
-| Runtime    | JDK 8 (`java-1.8.0-openjdk-devel`), gcc/g++, make, gdb, git, valgrind                   |
+| Runtime    | JDK 8 (`java-1.8.0-openjdk-devel-1:1.8.0.462.b08-2.el8`, as on the regression hosts of gha-ci's categories), gcc/g++, make, gdb, git, valgrind |
 | Tools      | csh, expect, dos2unix, lcov, bc, jq, lsof, file, diffutils, net-tools, telnet, wget    |
 | ssh        | `openssh-server` with host keys generated; CTP reaches nodes and shell cases over ssh   |
 | Locales    | `en_US.UTF-8`, `ko_KR.UTF-8`, `ko_KR.EUC-KR`                                            |
