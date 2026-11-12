@@ -134,11 +134,11 @@ ENV TZ Asia/Seoul
 ENV LC_ALL=en_US
 
 # ccache is installed but not in the compiler command: Jenkins starts every build with an empty
-# cache. A caller that keeps a cache sets CC="ccache gcc" and CXX="ccache g++".
+# cache.
 ENV CC=gcc
 ENV CXX=g++
 
-# the locales are for the unicode test cases
+# The time zone and the locales are for the test cases.
 RUN set -ex \
         && ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime \
         && echo 'ZONE="Asia/Seoul"' > /etc/sysconfig/clock \

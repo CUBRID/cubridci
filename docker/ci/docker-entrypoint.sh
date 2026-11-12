@@ -232,9 +232,6 @@ function run_coverage ()
   package_gcov
 }
 
-# Check out a repo at a branch: clone if absent, else fetch+reset+clean.
-# Retry transient network failures and exit non-zero if it never succeeds,
-# then log the resolved branch + commit so the CI log shows what ran.
 function checkout_repo ()
 {
   local repo=$1
@@ -271,91 +268,87 @@ function run_test ()
     echo "[info] Skipping the checkout in run_test on CircleCI"
   fi
 
-  #CUBRIDQA-1093. disable reuse_oid 
+  # CUBRIDQA-1093: too many cases fail with reuse_oid on; off until those cases are fixed.
   cd $WORKDIR/cubrid-testtools
   CTP/bin/ini.sh -s sql/cubrid.conf CTP/conf/medium.conf create_table_reuseoid no
   cd -
 
+  RUN_STAMP=$(mktemp)
+  trap 'rm -f "$RUN_STAMP"' EXIT
+
+  local t ctp_ret=0
   for t in ${TEST_SUITE//:/ }; do
-    (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t)
+    (cd $WORKDIR/cubrid-testtools && HOME=$WORKDIR CTP/bin/ctp.sh $t) || { ctp_ret=$?; break; }
   done
 
+  local verdict=
   if [[ ":$TEST_SUITE:" =~ :(medium|sql): ]]; then
-    report_test -x $TEST_REPORT $WORKDIR/cubrid-testtools/CTP/sql/result
+    XML_SRC=$WORKDIR/cubrid-testtools/CTP/sql/result
+    TC_REPO=cubrid-testcases
+    collect_xml
+    verdict=judge_sqlresult
+  fi
+
+  if [ "$ctp_ret" -ne 0 ]; then
+    echo "** ERROR: CTP exited with $ctp_ret" >&2
+    exit 1
+  fi
+
+  if [ -n "$verdict" ]; then
+    if "$verdict"; then exit 0; else exit 1; fi
   fi
 }
 
-function report_test ()
+# Change collect_xml and judge_sqlresult only together with test_rl8.10's: Jenkins and gha-ci must read a result alike.
+# $RUN_STAMP keeps reporting and judging off results left by earlier runs.
+function collect_xml ()
 {
-  if [ "$1" = "-x" ]; then
-    xml_output="$2"
-    mkdir -p "$xml_output"
-    shift 2
-  fi
+  local dest=${1:-$TEST_REPORT}
+  mkdir -p "$dest"
 
-  if [ $# -lt 1 ]; then
+  local n=0 x
+  while IFS= read -r x; do
+    cp -f "$x" "$dest/" && n=$((n + 1))
+  done < <(find -L "$XML_SRC" -type f -name '*.xml' ! -name 'summary.xml' ${RUN_STAMP:+-newer "$RUN_STAMP"} 2>/dev/null)
+
+  if [ "$n" -eq 0 ]; then
+    echo "[warn] no JUnit XML found under $XML_SRC" >&2
+  else
+    echo "[report] collected $n JUnit XML file(s) into $dest"
+  fi
+}
+
+function judge_sqlresult ()
+{
+  local summary_infos
+  summary_infos=$(find "$XML_SRC" -type f -name summary_info -newer "$RUN_STAMP" 2>/dev/null || true)
+  if [ -z "$summary_infos" ]; then
+    echo "** ERROR: no summary_info under $XML_SRC; nothing was tested" >&2
     return 1
   fi
-  result_path=$1
-  if [ ! -d $result_path ]; then
-    echo "Result path '$result_path' does not exist."
-    return 1
-  fi
 
-  #In case of testing nothing due to an error like failure to load a library.
-  if [ `find $result_path -type f -name summary_info | wc -l` -eq 0 ]; then
-     echo "Nothing is tested because of an error."
-     exit 1
-  fi
-
-  # grep exits 1 on a summary_info with no failure; under pipefail that would end the script here.
-  failed_list=$(find $result_path -name summary_info | { xargs -n1 grep -hw nok || true; } | awk -F: '{print $1}')
+  local failed_list nfailed
+  failed_list=$(echo "$summary_infos" | xargs -n1 grep -hw nok | awk -F: '{print $1}' || true)
   if [ -z "$failed_list" ]; then
     nfailed=0
   else
     nfailed=$(echo "$failed_list" | wc -l)
   fi
 
-  if [ -n "$xml_output" ]; then
-    # CTP writes its own JUnit report (<os>_<type>_<bits>_<build type>.xml, e.g. linux_sql_64bit_release.xml)
-    # next to summary.xml. Collect it for store_test_results;
-    # per-case failure details (query, diff, source links) live in its <failure> CDATA
-    # and are shown in the CircleCI 'Tests' tab, so they are no longer printed here.
-    ncopied=0
-    for f in $(find $result_path -name summary.xml); do
-      for x in "$(dirname $f)"/*.xml; do
-        [ -f "$x" ] || continue
-        [ "$(basename $x)" = "summary.xml" ] && continue
-        cp -f "$x" "$xml_output/" || true
-        ncopied=$((ncopied+1))
-      done
-    done
-    if [ $ncopied -eq 0 ]; then
-      echo "[warn] no CTP JUnit XML found under $result_path (requires cubrid-testtools#769)"
-    fi
-  fi
-
-  if [ $nfailed -gt 0 ]; then
+  if [ "$nfailed" -gt 0 ]; then
     echo "** There are $nfailed failed Testcases on this test."
     echo "** All failed Testcases are listed below:"
-    for f in $failed_list ; do
-      echo " - ${f##*$WORKDIR/cubrid-testcases/}"
-    done
-    echo "** See the CircleCI 'Tests' tab for per-case queries, diffs and source links."
-    exit $nfailed
-  else
-    echo "** All Tests are passed"
+    echo "$failed_list" | sed "s|.*$WORKDIR/$TC_REPO/| - |"
+    echo "** See the JUnit report in $TEST_REPORT for per-case queries, diffs and source links."
+    return 1
   fi
-}
 
-function run_default ()
-{
-  run_build
+  echo "** All Tests are passed"
 }
 
 case "$1" in
-  "")
-    set -- run_default
+  ""|-*)
+    set -- run_build "$@"
     ;;
   checkout)
     shift

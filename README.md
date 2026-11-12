@@ -21,7 +21,7 @@ Jenkins itself is reachable only from the internal network.
 | Size       | 1.73 GB on disk, 785 MB to pull                                                   |
 | Toolchain  | gcc/g++ 8.3.1 and make from devtoolset-8, git 2.12 from sclo-git212, cmake 3.26.3, ninja 1.11.1, bison 3.0.5, flex, ant, ccache 3.7.7 |
 | JDK        | Temurin 8u442-b06 at `/opt/jdk8` (`JAVA_HOME`); `ant` pulls in `java-1.7.0-openjdk-devel`, which is `/usr/bin/java` and where `find_package(JNI)` finds the headers |
-| Locale, TZ | `en_US`, `Asia/Seoul`                                                             |
+| Locale, TZ | `en_US`, `Asia/Seoul`; `ko_KR.UTF-8`, `ko_KR.EUC-KR` and `en_US.UTF-8` generated for the test cases |
 
 `CC` and `CXX` are preset to `gcc` and `g++`. ccache is installed but not used by default; set
 `CC="ccache gcc"` and `CXX="ccache g++"` to build through it.
@@ -36,7 +36,8 @@ and so loses the `/* fall through */` comments that `-Werror=implicit-fallthroug
 
 ## Usage
 
-The entrypoint takes a verb. Anything that is not a verb runs as a command.
+The entrypoint takes a verb. With no argument, or a first argument that starts with `-`, it
+builds. Anything else that is not a verb runs as a command.
 
 ```
 /entrypoint.sh checkout [<ref>]
@@ -121,8 +122,13 @@ sets what runs.
 | `BRANCH_TESTCASES` | branch of `cubrid-testcases` to check out. Default `develop`.       |
 | `TEST_REPORT`      | directory that receives CTP's JUnit XML. Default `/tmp/tests`.      |
 
-Both repositories are cloned into `/home` on every run. The failed cases are listed at the end,
-and the exit code is their count; with no result at all it is 1.
+Unless `CIRCLECI` is set, each run first checks both repositories out under `/home`: a clone the
+first time, a fetch and reset after that. The suites then run in turn, and one that CTP itself
+fails stops the rest. With `medium` or `sql` in `TEST_SUITE`, the verdict reads the
+`summary_info` files CTP wrote in this run, and this run's JUnit XML goes to `TEST_REPORT` as
+the report. That code is the same as in `test_rl8.10`, so a result reads the same here and in
+gha-ci, and a second run in the same `/home` does not count the first run's failures. The exit
+code is 1 when a case failed, nothing ran, or CTP failed; the failed cases are listed at the end.
 
 ```bash
 docker run --rm \
