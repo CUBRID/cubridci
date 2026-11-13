@@ -19,13 +19,12 @@ RUN set -ex \
         && yum clean all -y \
         && rm -rf /var/cache/yum
 
-# Three of the variables `scl enable devtoolset-8 sclo-git212` sets, because nothing in this image
-# runs `scl enable`: gha-ci calls /entrypoint.sh directly, past the ENTRYPOINT.
+# Nothing in this image runs `scl enable devtoolset-8 sclo-git212`.
 ENV PATH /opt/rh/devtoolset-8/root/usr/bin:/opt/rh/sclo-git212/root/usr/bin:$PATH
 ENV LD_LIBRARY_PATH /opt/rh/devtoolset-8/root/usr/lib64:/opt/rh/devtoolset-8/root/usr/lib:/opt/rh/devtoolset-8/root/usr/lib64/dyninst:/opt/rh/devtoolset-8/root/usr/lib/dyninst
 ENV PKG_CONFIG_PATH /opt/rh/devtoolset-8/root/usr/lib64/pkgconfig
 
-# The engine's CMake looks here for the JDK and the 3rdparty tarballs before downloading them.
+# So the engine's CMake does not download the JDK and the 3rdparty tarballs.
 ENV CUBRID_DOWNLOAD_CACHE /opt/download-cache
 ARG JDK_DIR=jdk8u442-b06
 ARG JDK_URL="https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u442-b06/OpenJDK8U-jdk_x64_linux_hotspot_8u442b06.tar.gz"
@@ -67,9 +66,8 @@ RUN set -ex \
         && install -s -m 755 build-cmake/ninja /usr/bin/ninja \
         && cd .. && rm -rf ninja-$NINJA_VERSION
 
-# EPEL 6 has only ccache 3.1.6, which compiles the preprocessed source: a /* fall through */
-# comment is gone by then and -Werror=implicit-fallthrough fails the build. 3.7.7 is the
-# version in build_rl8.10: gha-ci's build step counts cache hits and misses by its log wording.
+# EPEL's ccache 3.1.6 compiles preprocessed source without /* fall through */: -Werror fails.
+# 3.7.7 as in build_rl8.10: gha-ci counts cache hits by its log wording.
 ARG CCACHE_VERSION=3.7.7
 RUN set -ex \
         && curl -fsSL https://github.com/ccache/ccache/releases/download/v$CCACHE_VERSION/ccache-$CCACHE_VERSION.tar.gz | tar xzf - \
@@ -80,8 +78,8 @@ RUN set -ex \
         && cd .. && rm -rf ccache-$CCACHE_VERSION \
         && ccache --version
 
-# pl_engine's gradle wrapper downloads this every build, with a 10s network timeout.
-# The hash directory name is the wrapper's own base36(md5(distributionUrl)).
+# Else pl_engine's gradle wrapper downloads it every build, with a 10s timeout.
+# The wrapper looks only under base36(md5(distributionUrl)), hence GRADLE_DIST_HASH.
 ARG GRADLE_VERSION=8.1.1
 ARG GRADLE_DIST_HASH=9wiye5v2saajue4irfo8ybqfp
 ENV GRADLE_USER_HOME /opt/gradle-home
@@ -96,10 +94,8 @@ RUN set -ex \
         && touch "$dist/gradle-$GRADLE_VERSION-bin.zip.ok" \
         && chmod -R a+rwX $GRADLE_USER_HOME
 
-# 3rdparty.list and gradle-deps copy what CUBRID/cubrid's 3rdparty/CMakeLists.txt and pl_engine
-# download; update them when the engine bumps a version. --write-verification-metadata is what
-# makes gradle download the jars; help alone fetches only the settings plugin. The scratch gradle
-# home keeps gradle's own caches (154MB) out of the image; only caches/modules-2 moves in.
+# help alone fetches only the settings plugin; --write-verification-metadata pulls the jars.
+# The scratch gradle home keeps gradle's own caches (154MB) out of the image.
 COPY 3rdparty.list /tmp/
 COPY gradle-deps /tmp/gradle-deps/
 RUN set -ex \
@@ -115,8 +111,7 @@ RUN set -ex \
         && mv /tmp/gradle-home/caches/modules-2 $GRADLE_USER_HOME/caches/ \
         && rm -rf /tmp/3rdparty.list /tmp/gradle-deps /tmp/gradle-home
 
-# Gradle downloads a dependency the image lacks without a word; warn as the engine's 3rdparty
-# fetch does.
+# Gradle fetches a missing dependency silently.
 COPY warn-downloads.gradle $GRADLE_USER_HOME/init.d/
 
 ENV WORKDIR /home
@@ -133,8 +128,7 @@ ENV BRANCH_TESTCASES develop
 ENV TZ Asia/Seoul
 ENV LC_ALL=en_US
 
-# ccache is installed but not in the compiler command: Jenkins starts every build with an empty
-# cache.
+# Jenkins starts every build with an empty ccache.
 ENV CC=gcc
 ENV CXX=g++
 

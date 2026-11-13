@@ -5,13 +5,8 @@ set -o pipefail
 CUBRID_URL=https://github.com/CUBRID/cubrid.git
 CUBRID_SRC=cubrid
 
-# Every stage below reaches the network, and a clone of the full history is big
-# enough to fail halfway. The subshell is for the `cd` a stage does, so the next
-# attempt starts from the same directory as the first.
-#
-# Testing a subshell with && switches `set -e` off inside it, for the stage
-# function too. Every command in a stage therefore has to carry its own
-# `&&` or `|| return`; a bare one would go unnoticed when it fails.
+# The subshell undoes a stage's `cd` before the next attempt. `set -e` is off
+# inside it, so a command without its own && or || return fails unnoticed.
 function retry ()
 {
   local what=$1 i
@@ -33,16 +28,14 @@ function mirror_of ()
   echo "$BUILD_MIRROR/$(basename "${url%.git}").git"
 }
 
-# Never shallow: build.sh reads the build serial off `git rev-list --count`, so a
-# shallow clone stamps the package 0001.
+# Never shallow: build.sh takes the build serial from `git rev-list --count`.
 function fetch_source ()
 {
   local ref=$1
 
   if [ ! -d "$CUBRID_SRC/.git" ]; then
     if [ -n "$BUILD_MIRROR" ]; then
-      # Borrow the history, never write to it: a container dying mid-fetch would
-      # leave a .lock behind that stalls every later run.
+      # A container dying mid-fetch into the mirror leaves a .lock that stalls later runs.
       git clone -q --shared --no-checkout "$(mirror_of "$CUBRID_URL")" "$CUBRID_SRC" \
         || return 1
     else
@@ -51,7 +44,7 @@ function fetch_source ()
     fi
   fi
 
-  # Fetching the ref by name is what makes a bare commit work and not just a branch.
+  # By name, so a commit SHA works too, not just a branch.
   cd "$CUBRID_SRC" \
     && git remote set-url origin "$CUBRID_URL" \
     && git -c fetch.parallel=0 fetch -q --no-tags origin "$ref" \
@@ -67,8 +60,7 @@ function fetch_submodules ()
     || return 1
 
   if [ -n "$BUILD_MIRROR" ]; then
-    # Only where the mirror already holds the pinned commit; a submodule bumped
-    # after the mirror was seeded still comes from GitHub.
+    # A submodule bumped after the mirror was seeded is not in it.
     local sha path url m
     while read -r sha path; do
       url=$(git config -f .gitmodules --get "submodule.${path}.url") || return 1
@@ -80,8 +72,7 @@ function fetch_submodules ()
     done < <(git ls-tree HEAD | awk '$2 == "commit" { print $3, $4 }')
   fi
 
-  # A build writes into the submodules, so update cannot move them until the
-  # leftovers are gone.
+  # Build leftovers stop update from moving the submodules.
   git submodule foreach -q 'git reset -q --hard && git clean -qfdx' || true
   # git 2.38 stopped cloning a submodule from a local path (CVE-2022-39253).
   git -c protocol.file.allow=always submodule update -q --init --force
@@ -104,15 +95,12 @@ function run_checkout ()
        "($(git -C $CUBRID_SRC rev-list --count HEAD) commits)"
 }
 
-# A checkout that borrowed from BUILD_MIRROR reads its history through
-# .git/objects/info/alternates, so it needs that mirror on every later run too.
-# build.sh swallows the read error and stamps the package 11.5.0.-<hash>, which
-# is why this refuses to build rather than warning.
+# Without the history build.sh still exits 0 and stamps the package 11.5.0.-<hash>.
 function check_history ()
 {
   local dir=$1 err
   [ -d "$dir/.git" ] || return 0
-  # git names the real cause; a fixed hint can only guess at one of the two.
+  # Only git's message tells which of the two causes it is.
   err=$(git -C "$dir" rev-list --count HEAD 2>&1 > /dev/null) && return 0
   echo "** ERROR: cannot walk the history of $dir; the build number would be empty." >&2
   echo "$err" | sed 's/^/   git: /' >&2
@@ -162,38 +150,26 @@ function run_dist ()
     && ./build.sh -p $CUBRID $@ dist) | tee dist.log
 }
 
-# Two plain tars, as in CTP's common/ext/run_coverage.sh; see the README for why `dist` cannot.
-#
-# The names are that script's. The layout is not: it tars the trees from the inside, with no
-# top-level directory, and run_cubrid_install unpacks them into a cubrid-<build id> of its own
-# making. Keeping the tree's real directory name instead is what lets the test node put it back
-# at the path it was built at, which is what makes GCOV_PREFIX and lcov's
-# geninfo_adjust_src_path unnecessary. The consumer here is the test image, not that installer.
+# Not `dist`: see the README. The top-level directory lets the test node restore the build
+# path, so neither GCOV_PREFIX nor geninfo_adjust_src_path is needed.
 function package_gcov ()
 {
   local src version out=${GCOV_OUTPUT_DIR:-$PWD}
-  # $CUBRID_SRCDIR is where run_build found build.sh; only run_coverage calls this.
   src=$(cd "$CUBRID_SRCDIR" && pwd) || return 1
-  # A tree whose history cannot be walked stamps the version 11.5.0.-<hash> and build.sh still
-  # exits 0. check_history refuses that before the build; this is the last stop before the name
-  # goes onto an archive. (A print_fatal cannot reach here -- it exits 1, which the line above
-  # catches.)
+  # build.sh exits 0 with version 11.5.0.-<hash>; that must not reach the archive names.
   version=$(cd "$src" && ./build.sh -v) || return 1
   case "$version" in
     [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
     *) echo "** ERROR: build.sh -v answered '$version', which is not a version" >&2; return 1 ;;
   esac
 
-  # The mode is forced above, but this checks that it took effect rather than that it was
-  # asked for. Without .gcno there is nothing for lcov to read, and the archives would still
-  # go out under a name that says they carry coverage.
+  # Without .gcno lcov has nothing to read, yet the archive names would say coverage.
   [ -n "$(find "$src" -name '*.gcno' -print -quit)" ] \
     || { echo "** ERROR: no .gcno under $src; this is not a coverage build" >&2; return 1; }
 
   mkdir -p "$out" || return 1
   out=$(cd "$out" && pwd) || return 1
-  # tar cannot archive a directory it is writing into: the directory's own mtime changes
-  # while tar reads it and tar exits 1. Happens when the source is the working directory.
+  # tar exits 1 when it writes into the directory it archives.
   case "$out/" in
     "$src"/*)    echo "** ERROR: GCOV_OUTPUT_DIR ($out) is inside the source tree ($src);" \
                       "point it somewhere else" >&2; return 1 ;;
@@ -205,12 +181,10 @@ function package_gcov ()
   local build_tar=CUBRID-$version-gcov-$plat.tar.gz
   local src_tar=cubrid-$version-gcov-src-$plat.tar.gz
 
-  # The same step that script takes right before its own binary tar (run_coverage.sh:145).
+  # As CTP's run_coverage.sh:145 does before its binary tar.
   mkdir -p "$CUBRID/databases"
 
-  # .git is a third of the tree and no use to lcov; the build directory is, so it stays.
-  # The .gcda are this build's own coverage - build.sh runs instrumented binaries of its own,
-  # which left 375 of them here in the first real build - and a test run must not count them.
+  # lcov needs no .git. The .gcda are from build.sh's own runs; a test run must not count them.
   tar czf "$out/$src_tar" --exclude=.git --exclude='*.gcda' \
       -C "$(dirname "$src")" "$(basename "$src")" || return 1
   tar czf "$out/$build_tar" -C "$(dirname $CUBRID)" "$(basename $CUBRID)" || return 1
@@ -220,7 +194,7 @@ function package_gcov ()
   for f in "$build_tar" "$src_tar"; do
     echo "  $(cd "$out" && du -h "$f")"
   done
-  # The paths compiled into the .gcda have to exist on the test node, or lcov finds nothing.
+  # lcov needs the compiled-in source paths on the test node.
   echo "  built in $src; on the test node extract the source archive with" \
        "'tar -C $(dirname "$src") -xzf $src_tar'"
 }
@@ -295,8 +269,8 @@ function run_test ()
   fi
 }
 
-# Change collect_xml and judge_sqlresult only together with test_rl8.10's: Jenkins and gha-ci must read a result alike.
-# $RUN_STAMP keeps reporting and judging off results left by earlier runs.
+# Jenkins and gha-ci (test_rl8.10) must judge a result alike: change both together.
+# $RUN_STAMP: results left by earlier runs must not count.
 function collect_xml ()
 {
   local dest=${1:-$TEST_REPORT}
