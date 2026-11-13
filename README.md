@@ -122,8 +122,8 @@ sets what runs.
 | `BRANCH_TESTCASES` | branch of `cubrid-testcases` to check out. Default `develop`.       |
 | `TEST_REPORT`      | directory that receives CTP's JUnit XML. Default `/tmp/tests`.      |
 
-Unless `CIRCLECI` is set, each run first checks both repositories out under `/home`: a clone the
-first time, a fetch and reset after that. The suites then run in turn, and one that CTP itself
+Each run first checks both repositories out under `/home`: a clone the first time, a fetch and
+reset after that. The suites then run in turn, and one that CTP itself
 fails stops the rest. With `medium` or `sql` in `TEST_SUITE`, the verdict reads the
 `summary_info` files CTP wrote in this run, and this run's JUnit XML goes to `TEST_REPORT` as
 the report. That code is the same as in `test_rl8.10`, so a result reads the same here and in

@@ -261,12 +261,8 @@ function checkout_repo ()
 
 function run_test ()
 {
-  if [ -z "$CIRCLECI" ]; then
-    checkout_repo cubrid-testtools "$BRANCH_TESTTOOLS"
-    checkout_repo cubrid-testcases "$BRANCH_TESTCASES"
-  else
-    echo "[info] Skipping the checkout in run_test on CircleCI"
-  fi
+  checkout_repo cubrid-testtools "$BRANCH_TESTTOOLS"
+  checkout_repo cubrid-testcases "$BRANCH_TESTCASES"
 
   # CUBRIDQA-1093: too many cases fail with reuse_oid on; off until those cases are fixed.
   cd $WORKDIR/cubrid-testtools
