@@ -1,0 +1,8 @@
+WITH_LIBEXPAT_URL https://github.com/CUBRID/3rdparty/raw/develop/expat/expat-2.8.2.tar.gz ef7d1994f533c9e7343d6c19f31064fc8ebbcbcaa144be3812b4f43052a05f4c
+WITH_LIBEDIT_URL https://github.com/CUBRID/libedit/archive/refs/tags/csql_v1.2.tar.gz 140312cd2dd22b4981d22448f02ef215fd7685ca57bb90b1427e496234d2d7da
+WITH_RAPIDJSON_URL https://github.com/CUBRID/3rdparty/raw/develop/rapidjson/v1.1.0-250205.tar.gz 2d2601a82d2d3b7e143a3c8d43ef616671391034bc46891a9816b79cf2d3e7a8
+WITH_LIBOPENSSL_URL https://github.com/CUBRID/3rdparty/raw/develop/openssl/openssl-3.5.7.tar.gz a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8
+WITH_LIBUNIXODBC_URL https://github.com/CUBRID/3rdparty/raw/develop/unixODBC/unixODBC-2.3.14.tar.gz 4e2814de3e01fc30b0b9f75e83bb5aba91ab0384ee951286504bb70205524771
+WITH_LIBTBB_URL https://github.com/CUBRID/3rdparty/raw/develop/tbb/v2021.11.0.tar.gz 782ce0cab62df9ea125cdea253a50534862b563f1d85d4cda7ad4e77550ac363
+WITH_RE2_URL https://github.com/CUBRID/3rdparty/raw/develop/re2/2023-03-01.tar.gz 7a9a4824958586980926a300b4717202485c4b4115ac031822e29aa4ef207e48
+WITH_LZ4_URL https://github.com/CUBRID/3rdparty/raw/develop/lz4/lz4-1.10.0.tar.gz 537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
